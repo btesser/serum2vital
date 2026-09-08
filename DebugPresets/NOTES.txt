@@ -1,0 +1,40 @@
+Fixture creation status: INCOMPLETE (2026-09-08).
+No new fixture presets were saved. Serum 1 was reset using Menu > Init Preset.
+Blocked by Computer Use save-dialog targeting: set_value failed with Requested property was not in the CacheRequest (0x80070057); fresh accessibility clicks also failed with element 743 is not available in cached app state. Keyboard targeting activated Ableton instead of the owned dialog.
+Observed Serum 1 Init: LFO 1 OFF selected and ANCH enabled. Requested OFF/ANCH-on fixtures may therefore match baseline.
+Existing Serum 2 presets were not overwritten.
+
+Current folder listing:
+D:\VitalPresets\DebugPresets\1.SerumPreset
+D:\VitalPresets\DebugPresets\10.SerumPreset
+D:\VitalPresets\DebugPresets\11.SerumPreset
+D:\VitalPresets\DebugPresets\2.SerumPreset
+D:\VitalPresets\DebugPresets\3.SerumPreset
+D:\VitalPresets\DebugPresets\4 - lfo1 free.SerumPreset
+D:\VitalPresets\DebugPresets\5.SerumPreset
+D:\VitalPresets\DebugPresets\6.SerumPreset
+D:\VitalPresets\DebugPresets\7 - anchor off.SerumPreset
+D:\VitalPresets\DebugPresets\8.SerumPreset
+D:\VitalPresets\DebugPresets\9.SerumPreset
+
+Progress update: 00 init.fxp saved by user through Serum GUI and verified on disk (6345 bytes).
+01 lfo1 bpm off.fxp: reset to Init, disabled LFO 1 BPM; GUI shows BPM off and 6.2 Hz. Save dialog prepared; filename targeting retry failed (element 732 not available). Waiting for user to save this fixture.
+01 lfo1 bpm off.fxp saved by user and verified on disk (6359 bytes).
+02 lfo1 env.fxp: user initialized Serum; changed only LFO 1 mode from OFF to ENV, visually verified. Save dialog open, awaiting user save.
+02 lfo1 env.fxp saved by user and verified on disk (6399 bytes).
+03 lfo1 off.fxp deviation: OFF is already selected in Serum 1 Init. Left all settings unchanged to preserve requested OFF state. Save dialog opened; awaiting user save.
+03 lfo1 off.fxp saved by user and verified on disk (6453 bytes).
+04 lfo1 trip.fxp: user initialized Serum; enabled only LFO 1 TRIP. Visually verified TRIP on, BPM on, DOT off. Save dialog opened; awaiting user save.
+04 lfo1 trip.fxp saved by user and verified on disk (6371 bytes).
+05 lfo1 dot.fxp: user initialized Serum; enabled only LFO 1 DOT. Visually verified DOT on, BPM on, TRIP off. Save dialog opened; awaiting user save.
+05 lfo1 dot.fxp saved by user and verified on disk (6354 bytes).
+06 lfo1 anch.fxp deviation: ANCH is already enabled in Serum 1 Init. Left settings unchanged to preserve requested ANCH-on state. Save dialog opened; awaiting user save.
+06 lfo1 anch.fxp saved by user and verified on disk (6345 bytes).
+07 lfo1 rate 1-16.fxp: reset with Menu > Init Preset; changed only LFO 1 RATE to 1/16, visually verified with BPM enabled. Save dialog opened; awaiting user save.
+07 lfo1 rate 1-16.fxp saved by user and verified on disk (6479 bytes).
+08 lfo1 shape.fxp: reset through Menu > Init Preset; added three LFO 1 points at different heights. Deviation: single click did not insert a point; used double-click at each of three positions (approximately x=1/8,3/8,7/8). Original endpoints and center peak retained; BPM on and RATE 1/4. Save dialog opened; awaiting user save.
+08 lfo1 shape.fxp saved by user and verified on disk (6536 bytes).
+Scope update authorized by user: skip Serum 1 fixtures 09 and 10 because no LFO 5 tab is available. Add 03b lfo1 trig.fxp and 06b lfo1 anch off.fxp to cover non-default values.
+03b lfo1 trig.fxp: started from Init loaded before interrupted LFO 5 search (only tab navigation since Init); selected LFO 1 and changed only mode OFF to TRIG. Save dialog open; awaiting user save.
+03b lfo1 trig.fxp saved by user and verified on disk (6343 bytes).
+06b lfo1 anch off.fxp: observed fresh Init, changed only LFO 1 ANCH to off. Visually verified ANCH off, BPM on, RATE 1/4. Save dialog open; awaiting user save.
