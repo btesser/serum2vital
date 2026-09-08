@@ -1,0 +1,4 @@
+* text=auto eol=lf
+*.fxp binary
+*.SerumPreset binary
+*.wav binary
