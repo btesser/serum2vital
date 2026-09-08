@@ -28,6 +28,11 @@ dev = ["pytest", "zstandard", "cbor2", "numpy"]
 [project.scripts]
 serum2vital = "serum2vital.convert:main"
 
+[project.urls]
+Homepage = "https://github.com/btesser/serum2vital"
+Issues = "https://github.com/btesser/serum2vital/issues"
+Changelog = "https://github.com/btesser/serum2vital/blob/main/CHANGELOG.md"
+
 
 [tool.setuptools]
 packages = ["serum2vital"]
