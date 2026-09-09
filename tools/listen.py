@@ -122,7 +122,9 @@ def match_source(index: dict, vital: Path) -> list[Path]:
 
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("vital_folder", type=Path)
+    ap.add_argument("vital_folder", type=Path, help="folder of converted .vital files (or, with --sources, a label)")
+    ap.add_argument("--sources", type=Path, help="render the conversions of the Serum presets under this folder instead")
+    ap.add_argument("--report", type=Path, default=Path("logs/conversion_report.json"), help="conversion report mapping sources to outputs")
     ap.add_argument("--serum-root", type=Path, default=Path(os.environ.get("SERUM_ROOT", "D:/VSTData/serum")))
     ap.add_argument("--out", type=Path, required=True)
     ap.add_argument("--phrase", default=DEFAULT_PHRASE, help="note:start:duration triples, comma separated")
@@ -135,7 +137,16 @@ def main(argv=None) -> int:
         notes.append((int(note) + args.transpose, 100, float(start), float(duration)))
     seconds = max(start + duration for _, _, start, duration in notes) + 0.8
 
-    vitals = sorted(args.vital_folder.rglob("*.vital"))
+    forced_sources: dict[Path, Path] = {}
+    if args.sources:
+        report = json.loads(args.report.read_text(encoding="utf-8"))
+        root = str(args.sources.resolve()).lower().rstrip("\/") + os.sep
+        for item in report["results"]:
+            if item.get("output") and str(Path(item["source"]).resolve()).lower().startswith(root):
+                forced_sources[Path(item["output"])] = Path(item["source"])
+        vitals = sorted(forced_sources, key=lambda p: p.stem.lower())
+    else:
+        vitals = sorted(args.vital_folder.rglob("*.vital"))
     index = source_index(args.serum_root, args.out.parent / "_source_index.json")
     args.out.mkdir(parents=True, exist_ok=True)
 
@@ -156,7 +167,7 @@ def main(argv=None) -> int:
         except Exception as exc:
             print(f"vital failed: {stem}: {exc}")
             vital_ok = False
-        src = match_source(index, v)
+        src = [forced_sources[v]] if v in forced_sources else match_source(index, v)
         kind = "none"
         serum_wav = None
         if src:
@@ -166,7 +177,11 @@ def main(argv=None) -> int:
                 serum_wav = args.out / f"{stem} - serum.wav"
                 if not (args.reuse and serum_wav.exists()):
                     serum_jobs.append((str(s), str(serum_wav)))
-        rows.append({"name": stem, "category": str(v.relative_to(args.vital_folder).parent).replace("\\", "/"),
+        if v in forced_sources:
+            category = str(forced_sources[v].parent.relative_to(args.sources.resolve())).replace("\\", "/").strip(".")
+        else:
+            category = str(v.relative_to(args.vital_folder).parent).replace("\\", "/")
+        rows.append({"name": stem, "category": category,
                      "vital": vital_wav.name if vital_ok else None, "serum": serum_wav.name if serum_wav else None,
                      "source": kind, "source_path": str(src[0]) if src else "", "ambiguous": len(src) > 1})
 
