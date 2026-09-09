@@ -159,6 +159,35 @@ def test_reverb_hall_byte():
     assert settings("14 reverb hall.fxp").reverb_hall is True
 
 
+@pytest.mark.parametrize("offset,value,field,expected,vital_key,vital_value", [
+    # Identified by rendering crafted variants through the plugin (see FORMATS.md).
+    (0x00, 1.0, "a4_hz", 450.0, "voice_tune", pytest.approx(0.3893, abs=1e-3)),
+    (0x00, 0.0, "a4_hz", 430.0, "voice_tune", pytest.approx(-0.3981, abs=1e-3)),
+    (0x20, 0.0, "oversampling", 0, "oversampling", 0.0),
+    (0x20, 1.0, "oversampling", 2, "oversampling", 2.0),
+    (0x48, 1.0, "chorus_mono", True, None, None),
+])
+def test_crafted_switch_block_fields(tmp_path, offset, value, field, expected, vital_key, vital_value):
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
+    import craft_fxp
+
+    path = craft_fxp.write(FIX / "00 init.fxp", tmp_path / "crafted.fxp",
+                           [(serum1.SETTINGS_BASES[0] + offset, craft_fxp.f32(value))])
+    p = serum1.read(str(path))
+    assert p.settings.known and getattr(p.settings, field) == expected
+    if vital_key:
+        conv = mapping.convert_serum1(p)
+        assert conv.settings[vital_key] == vital_value
+
+
+def test_init_switch_block_globals():
+    s = settings("00 init.fxp")
+    assert (s.a4_hz, s.oversampling, s.chorus_mono) == (440.0, 1, False)
+    conv = mapping.convert_serum1(serum1.read(str(FIX / "00 init.fxp")))
+    assert conv.settings["oversampling"] == 1.0 and "voice_tune" not in conv.settings
+
+
 @pytest.mark.parametrize("name,changes", [
     ("14b reverb plate.fxp", {"reverb_hall": False}),
     ("19b chaos2 mono.fxp", {"chaos_mono": (False, True)}),

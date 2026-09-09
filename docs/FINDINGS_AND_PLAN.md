@@ -346,10 +346,14 @@ Still open (the full list, with how to settle each item, is the "Known
 unknowns" section of `FORMATS.md`; the fixtures that would do it are Batch C
 of `FIXTURE_PRESETS_TASK.md`):
 
-* Seven unidentified fields of the Serum 1 switches block (+0x00, +0x04,
-  +0x20, +0x30, +0x48, +0x4C, +0x60); nothing in the converter needs them yet.
-* Serum 2 source ids 39-44, the aux id encoding, the synced delay-time and FX
-  rate laws, and the meaning of the reverb `kParamDelay` for non-plate types.
+* Five fields of the Serum 1 switches block (+0x04, +0x30, +0x4C, +0x58,
+  +0x60) that change nothing audible; +0x00 (A4 reference), +0x20
+  (oversampling) and +0x48 (chorus mono switch) were identified on 2026-09-09
+  by rendering crafted variants and are now converted.
+* Serum 2 source ids 39-48, the synced delay-time and FX rate laws, and the
+  meaning of the reverb `kParamDelay` for non-plate types. Headless Serum 2
+  hosting is blocked (DawDreamer cannot set its state, pedalboard cannot scan
+  it), so these need fixtures. The aux id encoding is settled by the library.
 * Serum's unison detune width is narrower than Vital's at low knob values
   (±6 vs ±12 cents at 25%, equal at 75%); the amount curve was left as
   calibrated.

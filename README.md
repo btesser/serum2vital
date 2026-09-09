@@ -1,5 +1,9 @@
 # serum2vital
 
+<p align="center">
+  <img src="marketing/serum2vital-launch.png" alt="serum2vital: Serum presets, new life in Vital. Free and open source, Serum 1 + 2 to Vital." width="640">
+</p>
+
 Converts Xfer **Serum 1** (`.fxp`) and **Serum 2** (`.SerumPreset`) presets into
 **Vital** (`.vital`) presets: wavetables, noise samples, LFO shapes and switches,
 envelopes, filters, warp modes, effects and the modulation matrix.
@@ -143,7 +147,8 @@ positions.  The CLI report groups its notes into `approximation`, `conflict`,
   switch block: Mono/Legato and the polyphony count, portamento Always/Scaled,
   noise one-shot and pitch tracking, filter keytrack, unison detune range and
   tuning mode (Linear/Exp/Inv → Vital's detune power), Chaos Mono (Vital
-  random-LFO sync) and S&H (Vital's S&H style)
+  random-LFO sync) and S&H (Vital's S&H style), the A4 tuning reference,
+  oversampling (1x/2x/4x) and the chorus mono switch
 
 **Approximated** — reported per preset:
 

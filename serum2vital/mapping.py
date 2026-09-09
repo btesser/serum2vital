@@ -609,6 +609,9 @@ def _effects_from_serum1(conv: Conversion, patch: serum1.Serum1Patch) -> None:
         conv.set("chorus_delay_2", math.log2(max(0.001, 0.02 * _p(patch, "Cho_Dly2") ** 2)))
         conv.set("chorus_cutoff", hz_to_note(st.log_hz(_p(patch, "Cho_Filt"), 50.0, 20000.0)))
         _fx_rate(conv, "chorus", _p(patch, "Cho_BPM_Sync") > 0.5, _p(patch, "Cho_Rate"), "chorus")
+        if patch.settings.chorus_mono:
+            # Serum's switch runs the chorus LFO in phase on both channels.
+            conv.set("chorus_spread", 0.0)
 
     # --- distortion ---
     if _p(patch, "Dist Enable") > 0.5:
@@ -934,6 +937,12 @@ def convert_serum1(patch: serum1.Serum1Patch) -> Conversion:
         conv.set("polyphony", float(max(1, min(32, settings.polyphony))))
     conv.set("portamento_force", 1.0 if settings.porta_always else 0.0)
     conv.set("portamento_scale", 1.0 if settings.porta_scaled else 0.0)
+    # Serum's Global page: oversampling 1x/2x/4x (Vital: 1x/2x/4x/8x) and the
+    # A4 reference (430..450 Hz), which Vital only has as a global fine tune.
+    conv.set("oversampling", float(settings.oversampling))
+    if abs(settings.a4_hz - 440.0) > 0.01:
+        cents = 1200.0 * math.log2(settings.a4_hz / 440.0)
+        conv.set("voice_tune", max(-1.0, min(1.0, cents / 100.0)))
     if not settings.known:
         conv.note("approximation: preset predates Serum's voicing/unison/noise switch block; defaults assumed")
 

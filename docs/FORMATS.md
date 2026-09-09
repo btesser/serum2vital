@@ -197,22 +197,30 @@ and a polyphony value that is an exact (n − 1)/31) rather than by offset.
 
 | offset | field | encoding | evidence |
 |--------|-------|----------|----------|
+| +0x00 | A4 tuning reference | 430 + 20·v Hz (0.5 = 440 Hz) | crafted variants: 0 renders C4 at 255.7 Hz, 1 at 267.6 Hz (exactly 430/450 Hz references), and the Hz read-outs of cutoff shift with it |
 | +0x08, +0x0C | unison tuning A, B | index / 4: Linear, Super, Exp, Inv, Random | fixture 20 (Super = 0.25), manual order |
 | +0x10 | Mono | 0/1 | fixture 18 |
 | +0x14 | Legato | 0/1 | fixture 18; only ever set with Mono in the library |
 | +0x18 | Porta "Always" | 0/1 | fixture 24 (also: set in 27% of presets with portamento time, 0.7% without) |
 | +0x1C | Porta "Scaled" | 0/1 | fixture 25 |
+| +0x20 | Oversampling | index / 2: 1x, 2x (default), 4x | crafted variants: 0 aliases heavily on a Sync-warped note (+6.9 dB alias-to-harmonic ratio, and +6 dB level), 0.25/0.5 identical, 0.75/1.0 identical and cleaner (−4.7 dB); 1.0 in 12% of library presets |
 | +0x24 | Noise one-shot | 0/1 | fixture 21 + render: the sample stops at its end |
 | +0x28 | Noise pitch track | 0/1 | fixture 21 + render: Pitch knob reads in semitones, spectrum follows the note |
 | +0x2C | Polyphony | (voices − 1) / 31 | fixture 18 (4 voices = 3/31); 8 and 16 dominate the library |
 | +0x34 | Filter keytrack | 0/1 | fixture 17 |
 | +0x38, +0x3C | Unison range A, B | semitones / 48 | fixture 20 (12 st = 0.25), default 2 st |
 | +0x40, +0x44 | Chaos 1, 2 Mono | 0/1 | fixtures 19, 19b + render: no effect on a single voice |
+| +0x48 | Chorus mono switch | 0/1 | crafted variant with the chorus on: the L/R LFO phase offset disappears (inter-channel lag 169 → 0 samples, stereo width 0.33 → 0.23, level −0.7 dB); set in 81% of presets that use the chorus vs 17% otherwise. The GUI label was not observed; treated as the chorus running its LFO in phase on both channels |
 | +0x50, +0x54 | Chaos 1, 2 S&H | 0/1 | fixtures 19, 19c + render: stepped modulation |
 | +0x5C | Reverb Hall (1) / Plate (0) | 0/1 | fixture 14b; the per-effect record byte at `0x3B04` is a copy |
 
-Fields at +0x00 (0.5), +0x04, +0x20 (0.5), +0x30 (1.0), +0x48, +0x4C and
-+0x60 (0.1) have not been identified and are not read.
+Fields at +0x04 (0/1 in 1.5% of presets, leaning towards noise users),
++0x30 (always 1.0), +0x4C (0/1 in 3%, leaning towards compressor users),
++0x58 (junk in old builds) and +0x60 (0.1 default, 0–0.175, set in 23% of
+presets, leaning towards envelope-curve editors) produce no change in any
+rendered scenario — plain, velocity, release, chord, noise, Sync warp,
+filter, portamento, fast retrigger, and every effect switched on — so they
+are taken to be GUI-only state (display zoom, view options) and are not read.
 
 ### LFO shapes and switches
 
@@ -384,8 +392,10 @@ fixtures that would settle the items marked *fixture*.
 
 | item | status | how to settle |
 |------|--------|---------------|
-| Global switches block fields +0x00 (0.5), +0x04 (0/1 in 1.5% of presets), +0x20 (0.5), +0x30 (1.0), +0x48 and +0x4C (0/1 in 4% / 3%, unrelated to chaos or unison), +0x60 (0.1, ranges 0–0.175) | not read | *fixture*: needs a guess at the GUI control; candidates are the noise sample-start knob, OSC/noise buttons on the Global page and the master tuning/velocity curve controls |
-| LFO 5–8 switches in the classic layout (record at 0x33D0, only ANCH readable) | assumed synced, free-running; reported when those LFOs are used (about 9% of library presets, old builds only) | a preset saved from a build ≤1.3 with LFO 5 in Hz/ENV mode; current builds do not write this layout |
+| Global switches block fields +0x04, +0x30, +0x4C, +0x58, +0x60 | not read; none of them changes the rendered audio in any scenario (see the switches-block section), so they are taken to be GUI-only state | *fixture*: only worth it if a GUI control is found whose state is not covered elsewhere; +0x60 is probably a display zoom (its users edit envelope curves) |
+| Chorus switch at +0x48: its GUI label | read and mapped (Vital `chorus_spread` 0) from its measured effect (no L/R LFO offset) | a look at Serum's chorus panel |
+| LFO 5–8 switches in the classic layout | confirmed absent: the record at 0x33D0 holds only the four ANCH bytes, then zeros or heap junk, in every one of the 611 classic-layout presets that route LFO 5–8; those builds did not save the switches, so "synced, free-running" is the only possible reading | nothing to settle |
+| `Mast.Tun` parameter (index 80) range | measured at (v − 0.5) × 128 semitones on two points (±0.1 → ±12.8 st); never non-default in the 15k-preset library, so it is not converted statically | a third point with a wider pitch tracker if ever needed |
 | Second zlib stream in the chunk (16 KB, identical in every preset) and the uint32 before the length word | preserved verbatim by `tools/craft_fxp.py` | not needed |
 | Modulation record +0x00 (probably the smoothed amount) and +0x18 (a remapping of the destination index) | not read | not needed |
 | Per-effect record bytes other than the reverb Plate/Hall copy | not read (all mirror parameters) | not needed |
@@ -394,8 +404,9 @@ fixtures that would settle the items marked *fixture*.
 
 | item | status | how to settle |
 |------|--------|---------------|
-| Modulation source ids 39–44 | reported as unknown (about one routing per ten library presets) | *fixture*: a matrix with the remaining menu entries in order |
-| Aux source ids | assumed to share the source enum; never exercised by a fixture | *fixture*: one row with LFO 1 → level and Mod Wheel as aux |
+| Modulation source ids 39–44 (47, 48 also seen) | reported as unknown (about one routing per ten library presets, in factory presets of every 2.0.x version, including Steve Duda's own, so they are current sources that the `12`/`12b` menu capture missed rather than legacy ids). 39 and 41 mostly drive pan, fine tune and cutoff with small amounts; 40 and 42 drive LFO point mod buses and table position | *fixture*: a matrix with every Source menu entry (including any submenus) in order |
+| Aux source ids | confirmed to share the source enum by the library: the aux column holds 1 (mod wheel, 232 uses), 16 (velocity), 18 (aftertouch) and 25–32 (macros) almost exclusively | nothing to settle |
+| Hosting Serum 2 headlessly | blocked: DawDreamer's `load_state` / `load_vst3_preset` do not change Serum2.vst3's state (a plain save/load round trip fails too, and the state is an `XferJson` container with an md5-of-payload `hash` field, so the format itself is understood), and pedalboard refuses to scan the plugin. FX parameters are only exposed as opaque "FX Main Param N" proxies | a host whose VST3 state loading works with Serum 2, or the fixtures below |
 | Synced delay time steps (`FXDelay.kParamTime` when beat-synced) | law anchored on two factory presets | *fixture*: delay stepped through 1/64 … 4 bars |
 | Synced RATE of chorus/flanger/phaser | assumed to snap evenly over 8 bars … 1/32 on the quartic Hz knob | *fixture*: chorus rate stepped through the synced divisions |
 | Reverb `kParamDelay` for the non-plate types (DECAY or PRE-DLY?) | dropped, reported | *fixture*: Hall reverb with a distinctive decay and pre-delay |

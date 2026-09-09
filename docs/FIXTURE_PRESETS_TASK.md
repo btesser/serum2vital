@@ -192,12 +192,17 @@ stated. Serum 2 files go in `DebugPresets/`, Serum 1 files in
 | `16 delay 1-64.SerumPreset` … `16 delay 4bar.SerumPreset` | Delay enabled, beat sync on, time set to **1/64**, **1/16**, **1/4**, **1 bar**, **4 bar** (one file each; keep L/R linked). | synced delay-time law |
 | `17 chorus rate 1-32.SerumPreset`, `17 chorus rate 8bar.SerumPreset` | Chorus enabled, rate synced, RATE at **1/32** and at **8 bar**. | synced FX rate law |
 | `18 reverb hall decay.SerumPreset` | Reverb enabled, type **Hall**, DECAY at maximum, PRE-DLY at 100 ms (or another pair of values you note). | whether `kParamDelay` is decay or pre-delay |
-| `26 noise start.fxp` (Serum 1) | Noise enabled, drag the noise **Phase/start** knob to 50%. | whether switch-block field +0x60 is the sample start |
-| `27 global osc.fxp` (Serum 1) | GLOBAL tab, Oscillator Settings: toggle each button there **not** yet covered (e.g. oversampling / quality), one per file if there are several; note which. | switch-block fields +0x04, +0x48, +0x4C |
+| `26 chorus switch.fxp` (Serum 1) | FX tab: enable **Chorus** and toggle the one button on its panel that is not BPM; write down its label. | the GUI name of switch-block field +0x48 (its effect, no L/R LFO offset, is already measured and mapped) |
 
-Serum 1 fixtures from a build older than 1.3 (classic LFO layout) with LFO 5
-in Hz or ENV mode would complete the LFO 5-8 switch record, but only if such
-a build is available.
+Not needed any more: the A4 reference (+0x00) and oversampling (+0x20) were
+identified by rendering crafted presets, the LFO 5-8 switches of old builds
+were shown never to have been saved, and the aux id encoding is settled by the
+library. The remaining Serum 1 block fields (+0x04, +0x30, +0x4C, +0x58,
++0x60) change nothing audible; no fixture is requested for them.
+
+The Serum 2 rows above are the only route to those laws: neither DawDreamer
+nor pedalboard can push state into Serum2.vst3 on this machine (see
+`FORMATS.md`, "Known unknowns").
 
 ## After saving new fixtures
 

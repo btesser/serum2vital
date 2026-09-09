@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.3.0 (2026-09-09)
+
+* README: project artwork.
+* Serum 1: three more switch-block fields identified by rendering crafted
+  presets through the plugin and now converted: the A4 tuning reference
+  (430–450 Hz → Vital global fine tune), oversampling (1x/2x/4x → Vital's
+  oversampling setting) and the chorus mono switch (→ `chorus_spread` 0).
+  The five remaining fields change nothing audible and are documented as
+  GUI-only; the LFO 5–8 switches of pre-1.3 presets were shown never to have
+  been saved. Serum 2 aux ids confirmed from the library; ids 39–48 and the
+  FX unit laws remain fixture-only because no headless host on this machine
+  can push state into Serum2.vst3 (`docs/FORMATS.md`, "Known unknowns").
+
 ## 0.2.0 (2026-09-09)
 
 * Serum 1: the non-automatable switches are now read from the global switches

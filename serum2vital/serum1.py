@@ -98,12 +98,14 @@ NEW_OFF_NPTS = 0x2D10
 # each field with the parameters it belongs to (docs/FORMATS.md).
 SETTINGS_BASES = (0x4C48, 0x4C44, 0x4B9C)
 SETTINGS_SIZE = 0x64
+SET_TUNING_REF = 0x00        # A4 reference: 430 + 20 * v Hz (0.5 = 440 Hz)
 SET_UNISON_TUNING_A = 0x08   # index / 4: Linear, Super, Exp, Inv, Random
 SET_UNISON_TUNING_B = 0x0C
 SET_MONO = 0x10
 SET_LEGATO = 0x14
 SET_PORTA_ALWAYS = 0x18
 SET_PORTA_SCALED = 0x1C
+SET_OVERSAMPLING = 0x20      # index / 2: 1x, 2x (default), 4x
 SET_NOISE_ONE_SHOT = 0x24
 SET_NOISE_PITCH_TRACK = 0x28
 SET_POLYPHONY = 0x2C         # (voices - 1) / 31
@@ -111,6 +113,7 @@ SET_FILTER_KEYTRACK = 0x34
 SET_UNISON_RANGE_A = 0x38    # semitones / 48
 SET_UNISON_RANGE_B = 0x3C
 SET_CHAOS_MONO = (0x40, 0x44)
+SET_CHORUS_MONO = 0x48       # 1 = chorus LFO in phase on both channels (no L/R offset)
 SET_CHAOS_SH = (0x50, 0x54)
 SET_REVERB_HALL = 0x5C       # 1 = Hall (default), 0 = Plate
 UNISON_TUNING_NAMES = ("Linear", "Super", "Exp", "Inv", "Random")
@@ -242,6 +245,9 @@ class GlobalSettings:
     chaos_mono: tuple[bool, bool] = (False, False)
     chaos_sh: tuple[bool, bool] = (False, False)
     reverb_hall: bool = True
+    a4_hz: float = 440.0         # tuning reference, 430..450 Hz
+    oversampling: int = 1        # 0 = 1x, 1 = 2x, 2 = 4x
+    chorus_mono: bool = False    # chorus LFO without the L/R phase offset
     known: bool = True           # False when the block could not be located
 
 
@@ -446,6 +452,9 @@ def _read_settings(blob: bytes) -> GlobalSettings:
         chaos_mono=tuple(_flag(blob, base + o) for o in SET_CHAOS_MONO),
         chaos_sh=tuple(_flag(blob, base + o) for o in SET_CHAOS_SH),
         reverb_hall=_flag(blob, base + SET_REVERB_HALL),
+        a4_hz=430.0 + 20.0 * max(0.0, min(1.0, _f32(blob, base + SET_TUNING_REF))),
+        oversampling=max(0, min(2, int(round(_f32(blob, base + SET_OVERSAMPLING) * 2)))),
+        chorus_mono=_flag(blob, base + SET_CHORUS_MONO),
     )
 
 

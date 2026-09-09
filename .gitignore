@@ -18,3 +18,7 @@ dist/
 .idea/
 .DS_Store
 Thumbs.db
+
+# private outreach drafts; only the artwork is tracked
+marketing/*.md
+marketing/*.txt
