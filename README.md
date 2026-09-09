@@ -14,6 +14,9 @@ single-change fixture presets, and levels, envelopes and warp depths were
 calibrated by rendering the same notes through both synths. Every preset comes
 with a list of what was approximated or dropped.
 
+**Hear it first:** [btesser.github.io/serum2vital](https://btesser.github.io/serum2vital/)
+plays Serum originals next to their Vital conversions, category by category.
+
 Not affiliated with Xfer Records or Vital Audio. You need your own copies of
 the Serum presets and (for the wavetables) Serum's data folder.
 
@@ -209,6 +212,8 @@ instead of argued about:
   converted preset in a folder next to its Serum original (a held note, a
   short riff, a held note again) and writes an `index.html` with side-by-side
   players, so a whole category can be auditioned in one sitting.
+  `tools/publish_listen.py out/listen/reese --site site` turns those folders
+  into the MP3 + HTML site served from the `gh-pages` branch.
 * `tools/calibrate.py` runs the parameter sweeps the unit curves were fitted from.
 * `tools/verify.py out/` checks the structural invariants Vital's loader needs.
 

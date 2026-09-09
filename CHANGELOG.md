@@ -1,5 +1,11 @@
 # Changelog
 
+## Unreleased
+
+* Listening site: `tools/publish_listen.py` encodes `tools/listen.py` output
+  to MP3 and builds the static pages served from the `gh-pages` branch at
+  https://btesser.github.io/serum2vital/ (Reese sets published first).
+
 ## 0.4.0 (2026-09-09)
 
 * Oscillator phase now matches Serum. Serum reads a frame from `phase × N`
