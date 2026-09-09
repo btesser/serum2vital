@@ -1,7 +1,12 @@
 # Changelog
 
-## Unreleased
+## 0.4.1 (2026-09-09)
 
+* Serum 1 reader: matrix records are identified by `80 <slot> FF` at +0x21;
+  the byte before it is not always 0x80, and requiring it dropped about 240
+  routings in 3% of library presets, mostly LFO → level (several factory
+  sequences converted silent). Slots 1–16 are also checked against their
+  fixed offsets.
 * Listening site: `tools/publish_listen.py` encodes `tools/listen.py` output
   to MP3 and builds the static pages served from the `gh-pages` branch at
   https://btesser.github.io/serum2vital/ (Reese sets published first).

@@ -351,7 +351,12 @@ of `FIXTURE_PRESETS_TASK.md`):
   (oversampling) and +0x48 (chorus mono switch) were identified on 2026-09-09
   by rendering crafted variants and are now converted.
 * Serum 2 source ids 39-48, the synced delay-time and FX rate laws, and the
-  meaning of the reverb `kParamDelay` for non-plate types. Headless Serum 2
+  meaning of the reverb `kParamDelay` for non-plate types.
+* Filter "PN 12" (peaking notch) under a large positive cutoff modulation:
+  Serum still passes the signal at maximum cutoff, the Vital mapping (analog
+  model, style 4, blend 1, resonance 1) goes almost silent. Seen on the
+  factory preset "FX - Short Overtone Velocity 2" (velocity → cutoff +94%);
+  the remaining factory presets all render. Headless Serum 2
   hosting is blocked (DawDreamer cannot set its state, pedalboard cannot scan
   it), so these need fixtures. The aux id encoding is settled by the library.
 * Serum's unison detune width is narrower than Vital's at low knob values

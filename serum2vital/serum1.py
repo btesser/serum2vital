@@ -123,9 +123,13 @@ UNISON_TUNING_NAMES = ("Linear", "Super", "Exp", "Inv", "Random")
 # when the switches block is absent (20-21 KB presets).
 OFF_REVERB_HALL = 0x3B04
 
-# Modulation record: 40 bytes, self-identified by 80 80 <slot> FF at +0x20.
+# Modulation record: 40 bytes, self-identified by 80 <slot> FF at +0x21.  The
+# byte at +0x20 is usually 0x80 but not always (0xFF and arbitrary values occur
+# in about 3% of library presets, typically on LFO -> level routings), so it
+# is not part of the marker; a match is validated against the record's fields.
 MOD_RECORD_SIZE = 40
-MOD_MARKER = re.compile(rb"\x80\x80(.)\xff", re.S)
+MOD_MARKER = re.compile(rb"(?=\x80(.)\xff)", re.S)   # lookahead: markers may overlap
+MOD_MARKER_OFFSET = 0x21
 MOD_OFF_AMOUNT = 0x04       # float32, bipolar -1..1
 MOD_OFF_OUT = 0x08          # float32, output range scaler (1.0 = 100%)
 MOD_OFF_SOURCE = 0x14       # uint16, Serum source enum
@@ -463,9 +467,11 @@ def _read_mod_slots(blob: bytes) -> list[ModSlot]:
     slots: dict[int, ModSlot] = {}
     for match in MOD_MARKER.finditer(blob):
         index = match.group(1)[0]
-        base = match.start() - 0x20
+        base = match.start() - MOD_MARKER_OFFSET
         if base < 0 or index > 31 or base + MOD_RECORD_SIZE > len(blob):
             continue
+        if index < 16 and base != index * MOD_RECORD_SIZE:
+            continue                       # slots 1-16 sit at fixed offsets
         if index in slots:
             continue
         amount, out_range = struct.unpack_from("<2f", blob, base + MOD_OFF_AMOUNT)
@@ -473,6 +479,8 @@ def _read_mod_slots(blob: bytes) -> list[ModSlot]:
             continue
         source, aux = struct.unpack_from("<2H", blob, base + MOD_OFF_SOURCE)
         dest = struct.unpack_from("<H", blob, base + MOD_OFF_DEST)[0]
+        if source > 64 or aux > 64 or dest >= 1024:
+            continue                       # a marker-shaped byte run inside other data
         slots[index] = ModSlot(
             slot=index + 1,
             source=source,

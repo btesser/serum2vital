@@ -199,6 +199,28 @@ def test_oscillator_phase_convention(tmp_path):
     assert conv.settings["osc_3_phase"] == 0.0 and conv.settings["osc_3_random_phase"] == 0.0
 
 
+def test_matrix_record_marker_tolerates_first_byte(tmp_path):
+    # About 3% of library presets carry a byte other than 0x80 at +0x20 of a
+    # matrix record (0xFF on LFO -> level routings); only 80 <slot> FF at +0x21
+    # identifies the record. Craft slot 2 = LFO 1 -> A Vol +0.77 with 0xFF there.
+    import struct
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
+    import craft_fxp
+
+    record = bytearray(40)
+    struct.pack_into("<2f", record, 0x04, 0.77, 1.0)
+    struct.pack_into("<2H", record, 0x14, 5, 0)
+    struct.pack_into("<H", record, 0x1A, 1)
+    record[0x20:0x24] = b"\xff\x80\x01\xff"
+    path = craft_fxp.write(FIX / "00 init.fxp", tmp_path / "marker.fxp", [(40, bytes(record))])
+    p = serum1.read(str(path))
+    slot = [s for s in p.mod_slots if s.slot == 2][0]
+    assert (slot.source_name, slot.dest_name, round(slot.amount, 2), slot.active) == ("lfo_1", "A Vol", 0.77, True)
+    conv = mapping.convert_serum1(p)
+    assert any(m["source"] == "lfo_1" and m["destination"] == "osc_1_level" for m in conv.modulations)
+
+
 def test_init_switch_block_globals():
     s = settings("00 init.fxp")
     assert (s.a4_hz, s.oversampling, s.chorus_mono) == (440.0, 1, False)

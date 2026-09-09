@@ -128,8 +128,13 @@ Two parameters are stored as stepped indices rather than a continuous value
 ### Modulation matrix
 
 32 records of 40 bytes: slots 1–16 at offset 0, slots 17–32 further in. Each
-record is self-identifying — bytes `80 80 <slot> FF` sit at +0x20 — so the
-reader scans for that marker instead of trusting a fixed offset.
+record is self-identifying — bytes `80 <slot> FF` sit at +0x21 — so the
+reader scans for that marker (and, for slots 1–16, checks it sits at the
+slot's fixed offset) instead of trusting a position. The byte at +0x20 is
+0x80 in 99.4% of records but not part of the marker: 0xFF and arbitrary
+values occur in about 3% of library presets, mostly on LFO → level routings,
+and a reader that requires `80 80` there silently drops those routings (which
+is how several factory sequences converted silent before 0.4.1).
 
 | offset | type | meaning |
 |--------|------|---------|
