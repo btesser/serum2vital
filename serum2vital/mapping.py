@@ -387,6 +387,18 @@ def _display(patch: serum1.Serum1Patch, name: str) -> float:
 UNISON_TUNING_TO_POWER = {"Linear": 0.0, "Super": 0.0, "Exp": 1.5, "Inv": -2.0, "Random": 0.0}
 
 
+def serum_phase_to_vital(phase: float) -> float:
+    """Serum oscillator phase (0..1 of a cycle) -> Vital's phase parameter.
+
+    Both synths start a note at a fixed point of the frame when random phase
+    is off, but Serum reads from index phase * N while Vital reads from
+    (phase + 0.5) * N; Serum's default of 180 degrees is therefore Vital 0.0.
+    Serum's sub oscillator has no phase knob and behaves like 180 degrees
+    (a sine starting at zero and falling), i.e. Vital phase 0.0.
+    """
+    return (phase + 0.5) % 1.0
+
+
 def _osc_from_serum1(conv: Conversion, patch: serum1.Serum1Patch, letter: str, slot: int) -> None:
     """Map Serum oscillator A/B onto Vital oscillator `slot` (1-based)."""
     prefix = f"osc_{slot}"
@@ -420,7 +432,10 @@ def _osc_from_serum1(conv: Conversion, patch: serum1.Serum1Patch, letter: str, s
     conv.set(f"{prefix}_distortion_spread", _display(patch, f"{letter} Uni Warp") / 200.0)
 
     conv.set(f"{prefix}_wave_frame", _p(patch, f"{letter} WTPos") * 256.0)
-    conv.set(f"{prefix}_phase", _p(patch, f"{letter} Phase"))
+    # Serum starts reading a frame at phase * 2048, Vital at (phase + 0.5) * 2048
+    # (measured on both plugins with the same table), so the knob is shifted
+    # by half a cycle to start the waveform where Serum does.
+    conv.set(f"{prefix}_phase", serum_phase_to_vital(_p(patch, f"{letter} Phase")))
     conv.set(f"{prefix}_random_phase", _display(patch, f"{letter} RandPhase") / 100.0)
     conv.set(f"{prefix}_midi_track", 1.0 if _p(patch, f"Osc{letter}PitchTrack") > 0.5 else 0.0)
 
@@ -899,6 +914,9 @@ def convert_serum1(patch: serum1.Serum1Patch) -> Conversion:
         conv.set("osc_3_pan", _display(patch, "Sub Osc Pan") / 50.0)
         conv.set("osc_3_transpose", 12 * round(_display(patch, "SubOscOctave")))
         conv.set("osc_3_destination", 0.0 if _p(patch, "OscS>Fil") > 0.5 else 3.0)
+        # Serum's sub is phase-locked at note-on (measured on all five shapes).
+        conv.set("osc_3_phase", serum_phase_to_vital(0.5))
+        conv.set("osc_3_random_phase", 0.0)
         shape_index = st.indexed(_p(patch, "SubOscShape"), (4,))
         shape = st.SUB_SHAPE_NAMES[shape_index] if shape_index is not None and shape_index < 5 else "Sine"
         conv.wavetable_refs[2] = SUB_SHAPE_FILES.get(shape, "sin.wav")
@@ -1070,6 +1088,36 @@ def _s2_default(module_type: str, key: str, fallback: float = 0.0) -> float:
     return S2_DEFAULTS.get((module_type, key), fallback)
 
 
+# Serum 2 routing matrix (RoutingSlot<n>, one per sound source: 0-2 oscillators,
+# 3 noise, 4 sub) -> Vital oscillator destinations (0 filter 1, 3 effects,
+# 4 direct out).  Slot 0 defaults to the filter, the others to the effects
+# chain; "None" means the source only reaches the output through the FX
+# buses, which the converter flattens into the effect chain.
+S2_ROUTING_DEST = {
+    "kRoutingDestFilter": 0.0,
+    "kRoutingDestDirect": 3.0,
+    "kRoutingDestNone": 3.0,
+    "kRoutingDestMaster": 4.0,
+}
+
+
+def _s2_routing(conv: "Conversion", patch, slot: int, volume: float, what: str) -> tuple[float, float]:
+    """Return (level, destination) for Serum 2 source `slot`.
+
+    A source whose level knob is at zero but which is sent to an FX bus is
+    audible in Serum through that bus; its send level is used as the level.
+    """
+    routing = patch.plain_params(f"RoutingSlot{slot}")
+    dest_name = routing.get("kParamRoutingDest", "kRoutingDestFilter" if slot == 0 else "kRoutingDestDirect")
+    destination = S2_ROUTING_DEST.get(dest_name, 0.0 if slot == 0 else 3.0)
+    bus = max(float(routing.get("kParamFXBus1Level", 0.0)), float(routing.get("kParamFXBus2Level", 0.0))) / 100.0
+    level = max(volume, 0.0)
+    if level < 0.05 and bus > 0.0:
+        level = bus
+        conv.note(f"approximation: {what} reaches the output only through an FX bus at {bus * 100:.0f}%; used as its level")
+    return level, destination
+
+
 def s2_lfo_settings(params: dict) -> serum1.LfoSettings:
     mode = params.get("kParamMode")
     return serum1.LfoSettings(
@@ -1135,7 +1183,9 @@ def convert_serum2(patch) -> Conversion:
             )
 
         volume = params.get("kParamVolume", _s2_default("Oscillator", "kParamVolume"))
-        conv.set(f"osc_{vital_slot}_level", max(volume, 0.0))
+        level, destination = _s2_routing(conv, patch, source_index, volume, f"oscillator {source_index + 1}")
+        conv.set(f"osc_{vital_slot}_level", level)
+        conv.set(f"osc_{vital_slot}_destination", destination)
         conv.set(f"osc_{vital_slot}_pan", params.get("kParamPan", 0.0) / 50.0)
         # Serum 2 splits pitch into an octave switch and a semitone control
         # named kParamPitch (there is no kParamSemi).
@@ -1153,6 +1203,9 @@ def convert_serum2(patch) -> Conversion:
         if isinstance(wt, dict) and isinstance(wt.get("relativePathToWT"), str):
             conv.wavetable_refs[vital_slot - 1] = wt["relativePathToWT"]
         wt_params = wt.get("plainParams") if isinstance(wt, dict) else None
+        phase_params = wt_params if isinstance(wt_params, dict) else {}
+        conv.set(f"osc_{vital_slot}_random_phase", phase_params.get("kParamRandomPhase", 100.0) / 100.0)
+        conv.set(f"osc_{vital_slot}_phase", serum_phase_to_vital(phase_params.get("kParamInitialPhase", 180.0) / 360.0))
         if isinstance(wt_params, dict):
             # kParamTablePos is a 1-based frame index, so normalise it against
             # the table's own frame count before scaling to Vital's 0..256.
@@ -1161,8 +1214,6 @@ def convert_serum2(patch) -> Conversion:
                 frames = max(1, wt["numFrames"] // 2048)
             position = (wt_params.get("kParamTablePos", 1.0) - 1.0) / max(frames - 1, 1)
             conv.set(f"osc_{vital_slot}_wave_frame", 256.0 * max(0.0, min(1.0, position)))
-            conv.set(f"osc_{vital_slot}_random_phase", wt_params.get("kParamRandomPhase", 100.0) / 100.0)
-            conv.set(f"osc_{vital_slot}_phase", wt_params.get("kParamInitialPhase", 180.0) / 360.0)
             warp = wt_params.get("kParamWarpMenu")
             amount = wt_params.get("kParamWarp", 0.0) / 100.0
             if isinstance(warp, str):
@@ -1185,16 +1236,23 @@ def convert_serum2(patch) -> Conversion:
     sub = patch.plain_params("Oscillator4")
     if sub.get("kParamEnable", 0.0) > 0.5 and conv.get("osc_3_on") < 0.5:
         conv.set("osc_3_on", 1.0)
-        conv.set("osc_3_level", max(sub.get("kParamVolume", 0.75), 0.0))
+        level, destination = _s2_routing(conv, patch, 4, sub.get("kParamVolume", 0.75), "sub oscillator")
+        conv.set("osc_3_level", level)
+        conv.set("osc_3_destination", destination)
         conv.set("osc_3_transpose", 12 * sub.get("kParamOctave", 0.0))
         shape = patch.module("Oscillator4").get("SubOsc4", {}).get("plainParams", {})
         conv.wavetable_refs[2] = S2_SUB_SHAPES.get(shape.get("kParamShape") if isinstance(shape, dict) else None, "sin.wav")
+        sub_phase = shape.get("kParamInitialPhase", 180.0) if isinstance(shape, dict) else 180.0
+        conv.set("osc_3_phase", serum_phase_to_vital(float(sub_phase) / 360.0))
+        conv.set("osc_3_random_phase", 0.0)
     elif sub.get("kParamEnable", 0.0) > 0.5:
         conv.note("conflict: Serum 2 sub oscillator dropped (Vital's third oscillator is taken by oscillator 3)")
     noise = patch.plain_params("Oscillator3")
     if noise.get("kParamEnable", 0.0) > 0.5:
         conv.set("sample_on", 1.0)
-        conv.set("sample_level", max(noise.get("kParamVolume", 0.75), 0.0))
+        level, destination = _s2_routing(conv, patch, 3, noise.get("kParamVolume", 0.75), "noise oscillator")
+        conv.set("sample_level", level)
+        conv.set("sample_destination", destination)
         conv.set("sample_pan", noise.get("kParamPan", 0.0) / 50.0)
         conv.set("sample_loop", 1.0)
         noise_module = patch.module("Oscillator3").get("NoiseOsc3", {})
@@ -1262,6 +1320,8 @@ def convert_serum2(patch) -> Conversion:
             conv.set(f"lfo_{slot}_fade_time", min(4.0, params["kParamRise"]))
         if params.get("kParamDelay"):
             conv.set(f"lfo_{slot}_delay_time", min(4.0, params["kParamDelay"]))
+        if isinstance(params.get("kParamPhase"), (int, float)):
+            conv.set(f"lfo_{slot}_phase", (float(params["kParamPhase"]) / 360.0) % 1.0)
     if any(patch.plain_params(f"LFO{i}") for i in (8, 9)):
         conv.note("unsupported: Serum 2 LFOs 9-10 have no Vital counterpart and were dropped")
 

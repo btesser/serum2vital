@@ -181,6 +181,24 @@ def test_crafted_switch_block_fields(tmp_path, offset, value, field, expected, v
         assert conv.settings[vital_key] == vital_value
 
 
+def test_oscillator_phase_convention(tmp_path):
+    # Serum's default 180 degrees is Vital 0.0 (Serum reads a frame from
+    # phase*N, Vital from (phase+0.5)*N); the sub is phase-locked at note-on.
+    conv = mapping.convert_serum1(serum1.read(str(FIX / "00 init.fxp")))
+    assert conv.settings["osc_1_phase"] == 0.0 and conv.settings["osc_1_random_phase"] == 1.0
+    assert mapping.serum_phase_to_vital(0.0) == 0.5 and mapping.serum_phase_to_vital(0.75) == 0.25
+    import sys
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "tools"))
+    import craft_fxp
+    from serum2vital.serum_params import NAME_TO_INDEX
+
+    path = craft_fxp.write(FIX / "00 init.fxp", tmp_path / "sub.fxp",
+                           [(0x3460 + NAME_TO_INDEX["Osc S On"] * 4, craft_fxp.f32(1.0))])
+    conv = mapping.convert_serum1(serum1.read(str(path)))
+    assert conv.settings["osc_3_on"] == 1.0
+    assert conv.settings["osc_3_phase"] == 0.0 and conv.settings["osc_3_random_phase"] == 0.0
+
+
 def test_init_switch_block_globals():
     s = settings("00 init.fxp")
     assert (s.a4_hz, s.oversampling, s.chorus_mono) == (440.0, 1, False)

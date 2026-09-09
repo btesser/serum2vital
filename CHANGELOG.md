@@ -1,5 +1,23 @@
 # Changelog
 
+## 0.4.0 (2026-09-09)
+
+* Oscillator phase now matches Serum. Serum reads a frame from `phase × N`
+  and Vital from `(phase + 0.5) × N`, so converted oscillators started half a
+  cycle off; the sub oscillator, which Serum phase-locks at note-on, was left
+  at Vital's random phase and its sum with the other oscillators changed from
+  note to note (audible as phasing on bass patches). Both Serum 1 and Serum 2
+  paths shift the phase, lock the sub, and Serum 2's LFO phase is mapped.
+* Serum 2: sources whose level knob is at zero but which are sent to an FX
+  bus (94 oscillators in the factory library, e.g. "BA - The Even Odds") now
+  use the send level instead of converting silent; the routing matrix's
+  per-source destination (filter / effects / master / none) is applied.
+* CLI: the end-of-run summary no longer aborts on a preset name or note that
+  the console encoding cannot represent (which also lost the JSON report).
+* `tools/listen.py`: renders a folder of converted presets next to their
+  Serum originals (matched by the preset's internal name) with a short
+  phrase and writes an HTML player for A/B listening.
+
 ## 0.3.0 (2026-09-09)
 
 * README: project artwork.

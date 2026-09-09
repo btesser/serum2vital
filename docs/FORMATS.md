@@ -441,6 +441,15 @@ does. The generated key set matches a real 1.5.5 preset exactly, once the
 
 Things worth knowing when writing a preset:
 
+* **Oscillator phase is offset by half a cycle from Serum.** With random
+  phase off, Serum starts a note reading its frame at `phase × N` and Vital at
+  `(phase + 0.5) × N` (measured on both plugins with the same table: Serum's
+  180° default puts the saw's discontinuity at the note start, Vital's 0.5
+  puts it half a cycle in). The converter writes `(serum_phase + 0.5) mod 1`.
+  Serum's sub oscillator has no phase knob and is phase-locked at note-on,
+  starting at zero and falling for every shape; that is Vital phase 0.0 with
+  random phase 0, which the converter sets (Vital's default would randomise it
+  and make the sub's sum with the other oscillators change from note to note).
 * **Values are stored post-scaling.** A `quartic` parameter such as
   `env_1_attack` stores `seconds ** (1/4)`; its maximum of 2.37842 is exactly
   `32 ** (1/4)`, so Vital's envelopes top out at 32 seconds.

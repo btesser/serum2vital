@@ -124,7 +124,9 @@ positions.  The CLI report groups its notes into `approximation`, `conflict`,
 
 - oscillator A/B → Vital osc 1/2: level, pan, octave/semi/fine, unison voices,
   detune (both quadratic over a 2-semitone range), blend, stereo spread, unison
-  warp/WT-pos spread, wavetable position, phase, phase randomisation
+  warp/WT-pos spread, wavetable position, phase (Vital reads a frame half a
+  cycle later than Serum for the same knob value, which is compensated) and
+  phase randomisation; the sub is phase-locked at note-on, as in Serum
 - Serum's sub oscillator → Vital osc 3 (Sine, RoundRect, Saw, Square, Pulse),
   noise oscillator → Vital's sample source
 - envelopes 1–3: Serum's knobs are `t = 32·n⁵` seconds and Vital stores
@@ -203,6 +205,10 @@ instead of argued about:
   (VST2, via DawDreamer) and can print any parameter's display text.
 * `tools/ab_render.py preset.fxp preset.vital` renders the same note through
   both and prints level, spectral centroid and stereo correlation.
+* `tools/listen.py "out/.../BASS/REESE" --out out/listen/reese` renders every
+  converted preset in a folder next to its Serum original (a held note, a
+  short riff, a held note again) and writes an `index.html` with side-by-side
+  players, so a whole category can be auditioned in one sitting.
 * `tools/calibrate.py` runs the parameter sweeps the unit curves were fitted from.
 * `tools/verify.py out/` checks the structural invariants Vital's loader needs.
 
