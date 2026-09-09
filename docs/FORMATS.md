@@ -51,8 +51,33 @@ the preset embeds.
 | `0x49D0` | menu / bank (48) |
 | `0x4A60` | macro 1–4 names, 0x20 apart |
 | `0x4AE0` | parameters 228–298 |
+| varies | global switches block (see below): `0x4C48` in current builds, `0x4C44` and `0x4B9C` in older ones |
 | `0x84D8` | LFO 1–8 blocks, 0x2D28 bytes each — new layout only |
 | varies | modulation slots 17–32 |
+
+Between the parameters and the FX order block (`0x37F0`–`0x3BE0`) Serum keeps a
+per-effect record mirroring each effect's knobs, mode and enable state as
+bytes (distortion mode/enable at `0x396C`/`0x396E`, delay at `0x3A7C`/`0x3A7E`,
+reverb at `0x3B04`/`0x3B06`, hyper unison/enable/retrig at
+`0x3BD0`/`0x3BD2`/`0x3BD9`). Everything in it duplicates a parameter except the
+reverb's Plate/Hall byte at `0x3B04` (1 = Hall, Init's value; 0 in about a
+quarter of the library's reverb presets), which also mirrors the switches
+block field at +0x5C; the reader uses the byte only when the block is absent.
+
+### The chunk is two zlib streams
+
+The opaque chunk after the 60-byte FXP header is not one zlib stream but
+
+    zlib(state blob)        172,736 bytes in current builds
+    zlib(second block)      16,384 bytes, identical in every preset examined
+    uint32                  unknown, identical in every preset
+    uint32 LE               length of the first zlib stream
+
+and the header's byte-size field at offset 4 holds the whole file length.
+Serum silently keeps its previous state when the trailer or the final length
+word is missing, which is why earlier hand-crafted presets appeared to load as
+Init. `tools/craft_fxp.py` writes edited copies that preserve the trailer;
+that is how the noise and chaos switch bytes below were verified by rendering.
 
 These offsets were stable across the whole sample (e.g. parameter 2, "A Pan",
 read exactly 0.5 in 380 of 393 presets). The second parameter block exists
@@ -144,10 +169,10 @@ The full table is `MOD_SOURCES` in `serum2vital/serum1.py`:
 | 9–12 | LFO 5–8 | by extension of the block |
 | 13 | Velocity | fixture |
 | 14 | Note | fixture |
-| 15 | Aftertouch (channel) | probable: not in the fixture; Serum's menu lists it as a remaining source |
+| 15 | Aftertouch (channel) | fixture `11b sources extra.fxp` |
 | 16 | Poly Aftertouch | fixture |
 | 17, 18 | Chaos 1, Chaos 2 | fixture |
-| 19 | Noise OSC | probable: not in the fixture |
+| 19 | Noise OSC | fixture `11b sources extra.fxp` |
 | 20, 21 | NoteOn Rand 1, NoteOn Rand 2 | fixture |
 | 22, 23 | NoteOn Alt, NoteOn Alt 2 | fixture |
 | 24–27 | Macro 1–4 | corpus: correlates with each macro's own value being non-zero |
@@ -156,9 +181,38 @@ The full table is `MOD_SOURCES` in `serum2vital/serum1.py`:
 | 32 | Release Velocity | fixture |
 | 33 | Fixed | fixture |
 
-Id 0 means the slot is unused. Ids 15 and 19 are the two menu entries the
-fixture does not cover, so those two names are inferred from Serum's source
-menu rather than measured.
+Id 0 means the slot is unused. Every id in the table is now covered by a
+fixture or by the corpus correlation.
+
+### Global switches block
+
+The controls that are not VST parameters (voicing, portamento switches, noise
+buttons, filter keytrack, unison range/tuning, chaos switches) are float32
+fields in a 0x64-byte block that directly follows the parameter array. The
+array's length depends on the writing build, so the block moves: `0x4C48` in
+the current build (318 internal parameters), `0x4C44` in the previous one,
+`0x4B9C` in the 28 KB presets, and it does not exist in 20-21 KB files. The
+reader locates it by its invariants (0.5 at +0x00 and +0x20, 1.0 at +0x30,
+and a polyphony value that is an exact (n − 1)/31) rather than by offset.
+
+| offset | field | encoding | evidence |
+|--------|-------|----------|----------|
+| +0x08, +0x0C | unison tuning A, B | index / 4: Linear, Super, Exp, Inv, Random | fixture 20 (Super = 0.25), manual order |
+| +0x10 | Mono | 0/1 | fixture 18 |
+| +0x14 | Legato | 0/1 | fixture 18; only ever set with Mono in the library |
+| +0x18 | Porta "Always" | 0/1 | fixture 24 (also: set in 27% of presets with portamento time, 0.7% without) |
+| +0x1C | Porta "Scaled" | 0/1 | fixture 25 |
+| +0x24 | Noise one-shot | 0/1 | fixture 21 + render: the sample stops at its end |
+| +0x28 | Noise pitch track | 0/1 | fixture 21 + render: Pitch knob reads in semitones, spectrum follows the note |
+| +0x2C | Polyphony | (voices − 1) / 31 | fixture 18 (4 voices = 3/31); 8 and 16 dominate the library |
+| +0x34 | Filter keytrack | 0/1 | fixture 17 |
+| +0x38, +0x3C | Unison range A, B | semitones / 48 | fixture 20 (12 st = 0.25), default 2 st |
+| +0x40, +0x44 | Chaos 1, 2 Mono | 0/1 | fixtures 19, 19b + render: no effect on a single voice |
+| +0x50, +0x54 | Chaos 1, 2 S&H | 0/1 | fixtures 19, 19c + render: stepped modulation |
+| +0x5C | Reverb Hall (1) / Plate (0) | 0/1 | fixture 14b; the per-effect record byte at `0x3B04` is a copy |
+
+Fields at +0x00 (0.5), +0x04, +0x20 (0.5), +0x30 (1.0), +0x48, +0x4C and
++0x60 (0.1) have not been identified and are not read.
 
 ### LFO shapes and switches
 
@@ -286,18 +340,67 @@ Modulation slots carry their routing explicitly:
 
 `source` is `[source_id, aux_id]`. The same correlation method as for Serum 1
 identifies ids 2–5 as Env 1–4, 6–15 as LFO 1–10 (LFO0 matched id 6 in 99% of
-presets, LFO1 id 7 in 98%, LFO4 id 10 in 100%) and 25–32 as Macro 1–8. Ids 1
-(mod wheel), 16 (velocity), 17 (note), 18 (aftertouch), 21 and 23 (note-on
-random 1/2) follow from what they modulate in the corpus (`SERUM2_SOURCES` in
-`serum2vital/mapping.py`). Ids 19, 20, 22 and 24 remain unidentified and are
-reported rather than guessed; LFO 9–10 and Macro 5–8 are identified but
-dropped because Vital has only eight LFOs and four macros.
+presets, LFO1 id 7 in 98%, LFO4 id 10 in 100%) and 25–32 as Macro 1–8. The
+rest of the menu was captured with the fixtures `DebugPresets/12 sources.SerumPreset`
+and `12b sources extra.SerumPreset` (one known source per matrix row,
+labels in `DebugPresets/NOTES.txt`):
+
+| id | source | | id | source |
+|----|--------|-|----|--------|
+| 1 | Mod Wheel | | 33 | Pitch Bend |
+| 16 | Velocity | | 34, 35, 36 | Expr X (Pan), Y (Timbre), Z (Press.) |
+| 17 | Note | | 37 | Release Velocity |
+| 18 | Aftertouch (channel) | | 38 | Fixed |
+| 19 | Poly Aftertouch | | 49, 50, 51, 52 | OSC A, B, C, Sub audio |
+| 20 | Noise OSC | | 53, 54 | Filter 1, 2 audio |
+| 21, 22 | NoteOn Rand 1, 2 | | 55 | Active Voices |
+| 23, 24 | NoteOn Alt, Alt 2 | | 56, 57 | Voice Mod 1, 2 |
+| | | | 58 | Voice Index |
+| | | | 59 | NoteOn Rand (Discrete) |
+
+The build used has no Chaos entries (rows 4/5 of the fixture hold LFO 9/10).
+Ids 39–44 occur in the library (about one routing per ten presets) and are
+not in this menu capture; they are reported as unknown. LFO 9–10, Macro 5–8
+and the audio-rate/voice sources are identified but dropped because Vital has
+no counterpart (`SERUM2_SOURCES` / `SERUM2_UNSUPPORTED_SOURCES` in
+`serum2vital/mapping.py`). The synced LFO rate stores `100·n⁴` on a 15-step
+knob (`n = k/14`; 4 bar = 3, 1 bar = 5, 1/2 = 6, 1/16 = 9, 1/32 = 10), checked
+with the `13 rate` fixtures.
 
 Wavetable oscillators reference their table through `relativePathToWT`, e.g.
 `S2 Tables/Digital/FM Piano.wav`, resolved against `Tables/` or
 `Serum 2 Presets/Tables/` under the folder given with `--serum-root`.
 
 ---
+
+## Known unknowns
+
+What the readers still cannot interpret, as of 2026-09-09. None of it blocks
+a conversion; each item is either preserved verbatim, defaulted, or reported
+in the conversion notes. `FIXTURE_PRESETS_TASK.md` ("Batch C") lists the
+fixtures that would settle the items marked *fixture*.
+
+### Serum 1
+
+| item | status | how to settle |
+|------|--------|---------------|
+| Global switches block fields +0x00 (0.5), +0x04 (0/1 in 1.5% of presets), +0x20 (0.5), +0x30 (1.0), +0x48 and +0x4C (0/1 in 4% / 3%, unrelated to chaos or unison), +0x60 (0.1, ranges 0–0.175) | not read | *fixture*: needs a guess at the GUI control; candidates are the noise sample-start knob, OSC/noise buttons on the Global page and the master tuning/velocity curve controls |
+| LFO 5–8 switches in the classic layout (record at 0x33D0, only ANCH readable) | assumed synced, free-running; reported when those LFOs are used (about 9% of library presets, old builds only) | a preset saved from a build ≤1.3 with LFO 5 in Hz/ENV mode; current builds do not write this layout |
+| Second zlib stream in the chunk (16 KB, identical in every preset) and the uint32 before the length word | preserved verbatim by `tools/craft_fxp.py` | not needed |
+| Modulation record +0x00 (probably the smoothed amount) and +0x18 (a remapping of the destination index) | not read | not needed |
+| Per-effect record bytes other than the reverb Plate/Hall copy | not read (all mirror parameters) | not needed |
+
+### Serum 2
+
+| item | status | how to settle |
+|------|--------|---------------|
+| Modulation source ids 39–44 | reported as unknown (about one routing per ten library presets) | *fixture*: a matrix with the remaining menu entries in order |
+| Aux source ids | assumed to share the source enum; never exercised by a fixture | *fixture*: one row with LFO 1 → level and Mod Wheel as aux |
+| Synced delay time steps (`FXDelay.kParamTime` when beat-synced) | law anchored on two factory presets | *fixture*: delay stepped through 1/64 … 4 bars |
+| Synced RATE of chorus/flanger/phaser | assumed to snap evenly over 8 bars … 1/32 on the quartic Hz knob | *fixture*: chorus rate stepped through the synced divisions |
+| Reverb `kParamDelay` for the non-plate types (DECAY or PRE-DLY?) | dropped, reported | *fixture*: Hall reverb with a distinctive decay and pre-delay |
+| Module defaults never seen non-default in the corpus (chorus delays, flanger width, delay time) | educated guesses in `S2_FX_DEFAULTS` | a fixture with each module enabled at its defaults tells nothing; they only matter when a preset leaves the knob untouched |
+| Modules without a Vital counterpart: `RoutingSlot` (FX buses), `MidiClip`, `Arp`, `ArpClip`, `ClipPlayer`, `VoicePanel`, `PitchQuantizer`, `LFOPointModBus`; the multisample, granular and spectral oscillator engines | dropped, reported | out of scope for a Vital target |
 
 ## Vital — `.vital`
 

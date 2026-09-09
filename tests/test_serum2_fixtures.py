@@ -50,3 +50,45 @@ def test_lfo5_fixtures():
     assert mapping.s2_lfo_settings(p.plain_params("LFO4")).hz_mode is True
     p = serum2.read(str(FIX / "11.SerumPreset"))
     assert mapping.s2_lfo_settings(p.plain_params("LFO4")).mode == "env"
+
+
+@pytest.mark.parametrize("name,source_ids", [
+    ("12 sources.SerumPreset", [16, 17, 19, 14, 15, 21, 22, 23, 24, 34, 35, 36, 37, 38, 1, 33]),
+    ("12b sources extra.SerumPreset", [18, 20, 49, 50, 51, 52, 55, 59, 58, 56, 57, 53, 54]),
+])
+def test_captured_source_rows(name, source_ids):
+    # Main rows 4/5 use LFO 9/10: this build has no Chaos source entries.
+    p = serum2.read(str(FIX / name))
+    for i, source_id in enumerate(source_ids):
+        slot = p.module(f"ModSlot{i}")
+        assert slot["source"] == [source_id, 0]
+        assert slot["destModuleTypeString"] == "Oscillator"
+        assert slot["destModuleID"] == 0
+        assert slot["destModuleParamName"] == "kParamVolume"
+        assert slot["plainParams"]["kParamAmount"] == pytest.approx(50, abs=0.5)
+    assert not p.module(f"ModSlot{len(source_ids)}").get("source")
+
+
+def test_captured_sources_convert():
+    conv = mapping.convert_serum2(serum2.read(str(FIX / "12 sources.SerumPreset")))
+    # LFO 9/10, NoteOn Alt, MPE X and Fixed have no Vital counterpart and are dropped.
+    assert [m["source"] for m in conv.modulations] == [
+        "velocity", "note", "aftertouch", "random", "random", "slide", "aftertouch", "lift",
+        "mod_wheel", "pitch_wheel",
+    ]
+    conv = mapping.convert_serum2(serum2.read(str(FIX / "12b sources extra.SerumPreset")))
+    assert [m["source"] for m in conv.modulations] == ["aftertouch"]
+    assert any("OSC A audio" in note for note in conv.notes)
+    assert not any(note.startswith("unknown:") for note in conv.notes)
+
+
+@pytest.mark.parametrize("name,rate", [
+    ("13 rate 4bar.SerumPreset", 0.2108496543592536),
+    ("13 rate 1bar.SerumPreset", 1.6269264358721542),
+    ("13 rate 1-2.SerumPreset", 3.3735944697480575),
+    ("13 rate 1-32.SerumPreset", 26.030822973954468),
+])
+def test_captured_synced_rates(name, rate):
+    p = serum2.read(str(FIX / name))
+    assert p.plain_params("LFO0")["kParamRate"] == pytest.approx(rate)
+    assert lfo1(name).hz_mode is False

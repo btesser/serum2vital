@@ -318,16 +318,41 @@ Resolved since the sections above were written:
   catalog, warp/stack/sub tables and effect ordering are implemented; the
   fixture and unit tests live in `tests/`.
 
-Still open:
+Resolved on 2026-09-09 with the second fixture batch (Serum 1 `11b`-`23`,
+Serum 2 `12`, `12b`, `13 rate ×4`):
 
-* Serum 1 fixtures 13-23 of `docs/FIXTURE_PRESETS_TASK.md` (filter keytrack,
-  mono/legato, chaos S&H/mono, unison range/mode, noise flags, reverb Hall,
-  delay link). Without them those states stay at defaults.
-* Serum 2 source ids 20, 22, 24 and the Serum 2 aux ids; the four `13 rate`
-  fixtures would confirm the synced-rate table at the band edges.
-* Crafted `.fxp` files with several edits are rejected by the plugin (single
-  edits load fine); the cause is not isolated, so behavioural tests use real
-  presets plus host-set parameters.
+* The non-automatable switches live in a float32 "global switches block"
+  after the parameter array (`FORMATS.md`): mono/legato/polyphony, porta
+  Always/Scaled, noise one-shot/pitch-track, filter keytrack, unison
+  range/tuning, chaos Mono/S&H. The converter now sets Vital's polyphony,
+  legato, portamento switches, sample loop/keytrack, filter keytrack, unison
+  detune range/power and random-LFO style/sync from it. The reverb Plate/Hall
+  byte sits in the per-effect record at `0x3B04` (note only: Vital has no plate).
+* The `.fxp` chunk is two zlib streams plus a length word; keeping the second
+  stream makes crafted presets load (`tools/craft_fxp.py`). Rendering crafted
+  single-flag variants through Serum told the noise and chaos flags apart.
+* Serum 2 source ids are complete for the fixture menu (19 poly AT, 20 noise,
+  22 rand 2, 24 alt 2, 33 bend, 34-36 MPE, 37 release velocity, 38 fixed,
+  49-59 audio-rate/voice sources, which are dropped with a named note). The
+  synced-rate table holds at 4 bar, 1 bar, 1/2 and 1/32.
+* Serum's unison tuning modes measured against Vital's detune power: Linear
+  = power 0 (Vital's default 1.5 corresponds to Serum's Exp), Inv ≈ −2.
+
+* Follow-up fixtures `14b`, `19b`, `19c`, `24`, `25` (same day) confirmed the
+  Plate/Hall switch (block +0x5C, mirrored at `0x3B04`), chaos 2 Mono/S&H at
+  +0x44/+0x54 and porta Always/Scaled at +0x18/+0x1C by raw byte diff.
+
+Still open (the full list, with how to settle each item, is the "Known
+unknowns" section of `FORMATS.md`; the fixtures that would do it are Batch C
+of `FIXTURE_PRESETS_TASK.md`):
+
+* Seven unidentified fields of the Serum 1 switches block (+0x00, +0x04,
+  +0x20, +0x30, +0x48, +0x4C, +0x60); nothing in the converter needs them yet.
+* Serum 2 source ids 39-44, the aux id encoding, the synced delay-time and FX
+  rate laws, and the meaning of the reverb `kParamDelay` for non-plate types.
+* Serum's unison detune width is narrower than Vital's at low knob values
+  (±6 vs ±12 cents at 25%, equal at 75%); the amount curve was left as
+  calibrated.
 
 ## 11. Calibration (measured with the host harness)
 

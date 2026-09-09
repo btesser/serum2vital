@@ -379,6 +379,14 @@ def _display(patch: serum1.Serum1Patch, name: str) -> float:
     return denormalise(index, patch.params[index])
 
 
+# Serum's unison tuning menu -> Vital's detune power.  Measured on 7/8-voice
+# stacks: Serum Linear spaces voices evenly (Vital power 0), Exp matches Vital's
+# default 1.5 (-50 -25 -9 0 +9 +25 +50 cents), Inv pushes voices outwards
+# (power -2: -50 -43 -28 0 +28 +43 +50).  Super's slightly uneven spacing and
+# Random's per-note spacing have no counterpart and fall back to linear.
+UNISON_TUNING_TO_POWER = {"Linear": 0.0, "Super": 0.0, "Exp": 1.5, "Inv": -2.0, "Random": 0.0}
+
+
 def _osc_from_serum1(conv: Conversion, patch: serum1.Serum1Patch, letter: str, slot: int) -> None:
     """Map Serum oscillator A/B onto Vital oscillator `slot` (1-based)."""
     prefix = f"osc_{slot}"
@@ -400,6 +408,12 @@ def _osc_from_serum1(conv: Conversion, patch: serum1.Serum1Patch, letter: str, s
     conv.set(f"{prefix}_unison_voices", voices)
     # Both detune knobs are quadratic over a 2-semitone default range.
     conv.set(f"{prefix}_unison_detune", 10.0 * _p(patch, f"{letter} UniDet"))
+    settings = patch.settings
+    conv.set(f"{prefix}_detune_range", settings.unison_range[slot - 1])
+    tuning = settings.unison_tuning[slot - 1]
+    conv.set(f"{prefix}_detune_power", UNISON_TUNING_TO_POWER.get(tuning, 0.0))
+    if tuning in ("Super", "Random") and voices > 1:
+        conv.note(f"approximation: osc {letter} unison tuning '{tuning}' has no Vital equivalent; linear spacing used")
     conv.set(f"{prefix}_unison_blend", _display(patch, f"{letter} UniBlend") / 100.0)
     conv.set(f"{prefix}_stereo_spread", _display(patch, f"{letter} Uni LR") / 100.0)
     conv.set(f"{prefix}_frame_spread", _display(patch, f"{letter} Uni WTPos") * 1.28)
@@ -456,6 +470,7 @@ def _filter_from_serum1(conv: Conversion, patch: serum1.Serum1Patch) -> None:
     conv.set("filter_1_drive", 20.0 * _display(patch, "Fil Driv") / 100.0)
     conv.set("filter_1_mix", _display(patch, "Fil Mix") / 100.0)
     conv.set("filter_1_filter_input", 0.0)
+    conv.set("filter_1_keytrack", 1.0 if patch.settings.filter_keytrack else 0.0)
 
     index = serum_filter_index(_p(patch, "Fil Type"))
     if index is None:
@@ -513,7 +528,10 @@ def _chaos_from_serum1(conv: Conversion, patch: serum1.Serum1Patch) -> None:
     """Serum's Chaos 1/2 become Vital random LFOs 1/2 (Lorenz attractor)."""
     for number in (1, 2):
         prefix = f"random_{number}"
-        conv.set(f"{prefix}_style", 3.0)  # Lorenz Attractor
+        # S&H steps the chaos output; Mono shares one generator between voices,
+        # which is what Vital's random "sync" mode does.
+        conv.set(f"{prefix}_style", 1.0 if patch.settings.chaos_sh[number - 1] else 3.0)  # S&H / Lorenz
+        conv.set(f"{prefix}_sync_type", 1.0 if patch.settings.chaos_mono[number - 1] else 0.0)
         rate = _p(patch, f"Chaos{number} Rate")
         if _p(patch, f"Chaos{number} BPM") > 0.5:
             conv.set(f"{prefix}_sync", SYNC_TEMPO)
@@ -546,6 +564,8 @@ def _effects_from_serum1(conv: Conversion, patch: serum1.Serum1Patch) -> None:
         conv.set("reverb_high_shelf_cutoff", 128.0 * (1.0 - _display(patch, "VerbHiCt") / 100.0))
         conv.set("reverb_chorus_amount", _display(patch, "VerbWdth") / 100.0 * 0.5)
         conv.note("approximation: reverb size/decay/damping mapped by ear; Vital's reverb is a different algorithm")
+        if not patch.settings.reverb_hall:
+            conv.note("approximation: Serum's Plate reverb mode has no Vital equivalent; Hall settings used")
 
     # --- delay ---
     if _p(patch, "Dly Enable") > 0.5:
@@ -886,9 +906,9 @@ def convert_serum1(patch: serum1.Serum1Patch) -> Conversion:
     if noise_on:
         conv.set("sample_level", _p(patch, "Noise Level"))
         conv.set("sample_pan", _display(patch, "Noise Pan") / 50.0)
-        conv.set("sample_loop", 1.0)
+        conv.set("sample_loop", 0.0 if patch.settings.noise_one_shot else 1.0)
         conv.set("sample_random_phase", 1.0 if _p(patch, "Noise RandPhase") > 0.5 else 0.0)
-        conv.set("sample_keytrack", 0.0)
+        conv.set("sample_keytrack", 1.0 if patch.settings.noise_pitch_track else 0.0)
         conv.set("sample_destination", 0.0 if _p(patch, "OscN>Fil") > 0.5 else 3.0)
         # Serum's noise pitch knob spans +-48 semitones around the centre (approx).
         conv.set("sample_transpose", round((_p(patch, "Noise Pitch") - 0.5) * 96.0))
@@ -906,7 +926,16 @@ def convert_serum1(patch: serum1.Serum1Patch) -> Conversion:
     porta = st.portamento_seconds(_p(patch, "PortTime"))
     conv.set("portamento_time", -10.0 if porta < 0.001 else max(-10.0, math.log2(porta)))
     conv.set("pitch_bend_range", abs(_display(patch, "Bend U")))
-    conv.set("polyphony", 8.0)
+    settings = patch.settings
+    if settings.mono:
+        conv.set("polyphony", 1.0)
+        conv.set("legato", 1.0 if settings.legato else 0.0)
+    else:
+        conv.set("polyphony", float(max(1, min(32, settings.polyphony))))
+    conv.set("portamento_force", 1.0 if settings.porta_always else 0.0)
+    conv.set("portamento_scale", 1.0 if settings.porta_scaled else 0.0)
+    if not settings.known:
+        conv.note("approximation: preset predates Serum's voicing/unison/noise switch block; defaults assumed")
 
     # An empty table name means Serum's built-in default table (saw first).
     conv.wavetable_refs[0] = patch.wavetable_a or (DEFAULT_TABLE if _p(patch, "Osc A On") > 0.5 else None)
@@ -924,12 +953,13 @@ def convert_serum1(patch: serum1.Serum1Patch) -> Conversion:
 # Serum 2 modulation sources, verified by correlating source ids against which
 # module a preset actually edits (LFO block matched at 0.86-1.00).
 SERUM2_SOURCES = {
-    # Same menu as Serum 1 shifted by the extra envelope and LFOs; 1, 16-18
-    # follow from what they modulate (wheel -> macros/cutoff/aux vibrato,
-    # velocity -> level, note -> cutoff with negative amounts, aftertouch ->
-    # aux vibrato depth), 21/23 target per-note fine tune and pan (random).
+    # Menu ids captured with the fixtures DebugPresets/12 sources.SerumPreset
+    # and 12b sources extra.SerumPreset (one known source per matrix row).
     1: "mod_wheel", 16: "velocity", 17: "note", 18: "aftertouch",
-    21: "note_random_1", 23: "note_random_2",
+    19: "poly_aftertouch", 20: "noise_osc",
+    21: "note_random_1", 22: "note_random_2", 23: "note_alt_1", 24: "note_alt_2",
+    33: "pitch_bend", 34: "mpe_x", 35: "mpe_y", 36: "mpe_z",
+    37: "release_velocity", 38: "fixed",
 }
 for _i in range(4):
     SERUM2_SOURCES[2 + _i] = f"env_{_i + 1}"
@@ -937,6 +967,16 @@ for _i in range(8):  # Vital only has 8 LFOs; Serum 2 has 10
     SERUM2_SOURCES[6 + _i] = f"lfo_{_i + 1}"
 for _i in range(4):  # Vital only has 4 macros; Serum 2 has 8
     SERUM2_SOURCES[25 + _i] = f"macro_{_i + 1}"
+
+# Serum 2 sources that Vital cannot provide (audio-rate and voice bookkeeping
+# sources), named so the conversion report can say what was dropped.
+SERUM2_UNSUPPORTED_SOURCES = {
+    14: "LFO 9", 15: "LFO 10",
+    29: "Macro 5", 30: "Macro 6", 31: "Macro 7", 32: "Macro 8",
+    49: "OSC A audio", 50: "OSC B audio", 51: "OSC C audio", 52: "Sub OSC audio",
+    53: "Filter 1 audio", 54: "Filter 2 audio", 55: "Active Voices",
+    56: "Voice Mod 1", 57: "Voice Mod 2", 58: "Voice Index", 59: "NoteOn Rand (Discrete)",
+}
 
 # Serum 2 destinations, addressed as (module type, module index, parameter).
 SERUM2_DEST = {
@@ -1263,6 +1303,8 @@ def _modulations_from_serum2(conv: Conversion, patch) -> None:
                 conv.note("unsupported: modulations from Serum 2 macros 5-8 dropped (Vital has 4 macros)")
             elif 14 <= source_id <= 15:
                 conv.note("unsupported: modulations from Serum 2 LFOs 9-10 dropped (Vital has 8 LFOs)")
+            elif source_id in SERUM2_UNSUPPORTED_SOURCES:
+                conv.note(f"unsupported: Serum 2 source '{SERUM2_UNSUPPORTED_SOURCES[source_id]}' has no Vital equivalent; routing dropped")
             else:
                 conv.note(f"unknown: Serum 2 modulation source id {source_id} not identified; routing dropped")
             continue
@@ -1295,11 +1337,20 @@ def _modulations_from_serum2(conv: Conversion, patch) -> None:
         bipolar = isinstance(params, dict) and params.get("kParamBipolar", 0.0) > 0.5
         aux = SERUM2_SOURCES.get(aux_id) if aux_id else None
         if aux_id and aux is None:
-            conv.note(f"approximation: Serum 2 aux source id {aux_id} not identified; routing applied without it")
+            if aux_id in SERUM2_UNSUPPORTED_SOURCES:
+                conv.note(f"approximation: aux source '{SERUM2_UNSUPPORTED_SOURCES[aux_id]}' has no Vital counterpart; routing applied without it")
+            else:
+                conv.note(f"unknown: Serum 2 aux source id {aux_id} not identified; routing applied without it")
         vital_source = SOURCE_TO_VITAL.get(source, source)
-        if aux:
+        if vital_source is None:
+            conv.note(f"unsupported: modulation source '{source}' has no Vital counterpart; routing dropped")
+            continue
+        vital_aux = SOURCE_TO_VITAL.get(aux, aux) if aux else None
+        if aux and vital_aux is None:
+            conv.note(f"approximation: aux source '{aux}' has no Vital counterpart; routing applied without it")
+        if vital_aux:
             index = conv.add_modulation(vital_source, destination, 0.0, bipolar)
             if index is not None:
-                conv.add_modulation(SOURCE_TO_VITAL.get(aux, aux), f"modulation_{index}_amount", amount / 100.0, False)
+                conv.add_modulation(vital_aux, f"modulation_{index}_amount", amount / 100.0, False)
         else:
             conv.add_modulation(vital_source, destination, amount / 100.0, bipolar)

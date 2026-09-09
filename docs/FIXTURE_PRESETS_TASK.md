@@ -44,11 +44,36 @@ File names below are exact; the tests look them up by name.
 | `07 lfo1 rate 1-16.fxp` | LFO 1 RATE at 1/16 | yes (rate step table, `lfo_1_tempo`) |
 | `08 lfo1 shape.fxp` | three points added to the LFO 1 graph (by double-click) | yes (481-point array reading) |
 | `11 sources.fxp` | matrix rows 1-16 with the sources listed below | yes (source ids 1, 13, 14, 16-18, 20-23, 28-33) |
+| `11b sources extra.fxp` | rows 1-2: channel Aftertouch, Noise OSC | yes (source ids 15, 19) |
+| `12 aux.fxp` | LFO 1 -> A Fine with Mod Wheel as aux source | yes (aux id) |
+| `13 fx order.fxp` | Reverb enabled and dragged to the rack top | yes (rack order block) |
+| `14 reverb hall.fxp` | Reverb enabled, Hall (already the default) | yes (Plate/Hall byte reads Hall) |
+| `15 delay pingpong.fxp` | Delay enabled, Ping-Pong (LINK was already off) | yes (parameters) |
+| `16 hyper.fxp` | Hyper on, unison 7, retrig, Dimension mix 50% | yes (parameters) |
+| `17 filter keytrack.fxp` | Filter on, keytrack on | yes (switch block +0x34) |
+| `18 mono legato.fxp` | polyphony 4, Mono, Legato | yes (switch block +0x10/+0x14/+0x2C) |
+| `19 chaos sh mono.fxp` | Chaos 1 BPM sync, Mono, S&H | yes (switch block +0x40/+0x50, told apart by rendering) |
+| `20 unison range super.fxp` | OSC A range 12, tuning Super, stack 12+7(1x) | yes (switch block +0x08/+0x38) |
+| `21 noise.fxp` | Noise on, one-shot, pitch track | yes (switch block +0x24/+0x28, told apart by rendering) |
+| `22 dist mode.fxp` | Distortion on, Tape Sat. | yes (parameters) |
+| `23 filter type.fxp` | Filter on, Scream BP | yes (parameters) |
 
 Fixtures `09`/`10` (LFO 5) were skipped because the LFO 5-8 tab could not be
-found in the build used; `11b` and `12`-`23` have not been made yet, so the
-states they cover stay at their defaults in the converter (see section 10 of
-`FINDINGS_AND_PLAN.md`).
+found in the build used. Fixtures `11b` and `12`-`23` were captured on
+2026-09-09; what they revealed is written up in `FORMATS.md` ("Global
+switches block") and the reader exposes it as `Serum1Patch.settings`.
+
+Additional fixtures captured from fresh Init through the Serum 1 GUI on
+2026-09-09, with isolated-switch assertions in `tests/test_serum1_fixtures.py`:
+
+* `14b reverb plate.fxp`: Reverb enabled, switched to **Plate**.
+* `19b chaos2 mono.fxp` and `19c chaos2 sh.fxp`: Chaos 2 Mono only / S&H only;
+  BPM Sync remains off. These confirm the Chaos 2 switch identities.
+* `24 porta always.fxp` and `25 porta scaled.fxp`: portamento **Always** only /
+  **Scaled** only. These confirm the previously inferred switch identities.
+
+All five decode as requested with no unrelated parameter or global-setting
+changes. This follow-up batch is complete.
 
 `DebugPresets/` (Serum 2), covered by `tests/test_serum2_fixtures.py`:
 
@@ -66,7 +91,10 @@ states they cover stay at their defaults in the converter (see section 10 of
 | `10.SerumPreset` | LFO 5 BPM off |
 | `11.SerumPreset` | LFO 5 mode Envelope |
 
-The Serum 2 `12`/`13` fixtures below have not been made.
+The Serum 2 `12`/`13` fixtures below were captured on 2026-09-09, including
+`12b sources extra`. This build has no Chaos source entries: rows 4/5 of
+`12 sources` use LFO 9/10 as documented substitutes. See `DebugPresets/NOTES.txt`
+for exact source labels, IDs, and deviations.
 
 `DebugPresets/NOTES.txt` is the log kept while the existing fixtures were
 saved; it records the deviations noted above.
@@ -149,6 +177,27 @@ saved; it records the deviations noted above.
 | `13 rate 1bar.SerumPreset` | LFO 1 synced, RATE readout **1 bar** (or **bar**). |
 | `13 rate 1-2.SerumPreset` | LFO 1 synced, RATE readout **1/2**. |
 | `13 rate 1-32.SerumPreset` | LFO 1 synced, RATE readout **1/32**. |
+
+## Batch C: fixtures still wanted (as of 2026-09-09)
+
+Everything in batches A and B exists. These would settle the remaining items
+in `FORMATS.md` ("Known unknowns"); all are single changes from Init unless
+stated. Serum 2 files go in `DebugPresets/`, Serum 1 files in
+`DebugPresets/serum1/`.
+
+| File name | What to change from Init | Settles |
+|---|---|---|
+| `14 sources rest.SerumPreset` | Matrix rows 1-n: every Source menu entry **not** used in `12 sources` / `12b sources extra` (the labels are listed in `NOTES.txt`), in menu order, destination Osc A Level, amount +50. Record the labels. | source ids 39-44 |
+| `15 aux.SerumPreset` | Matrix row 1: Source **LFO 1**, Destination Osc A Level, amount +50, aux/"Mod Src" column set to **Mod Wheel**. | Serum 2 aux id encoding |
+| `16 delay 1-64.SerumPreset` … `16 delay 4bar.SerumPreset` | Delay enabled, beat sync on, time set to **1/64**, **1/16**, **1/4**, **1 bar**, **4 bar** (one file each; keep L/R linked). | synced delay-time law |
+| `17 chorus rate 1-32.SerumPreset`, `17 chorus rate 8bar.SerumPreset` | Chorus enabled, rate synced, RATE at **1/32** and at **8 bar**. | synced FX rate law |
+| `18 reverb hall decay.SerumPreset` | Reverb enabled, type **Hall**, DECAY at maximum, PRE-DLY at 100 ms (or another pair of values you note). | whether `kParamDelay` is decay or pre-delay |
+| `26 noise start.fxp` (Serum 1) | Noise enabled, drag the noise **Phase/start** knob to 50%. | whether switch-block field +0x60 is the sample start |
+| `27 global osc.fxp` (Serum 1) | GLOBAL tab, Oscillator Settings: toggle each button there **not** yet covered (e.g. oversampling / quality), one per file if there are several; note which. | switch-block fields +0x04, +0x48, +0x4C |
+
+Serum 1 fixtures from a build older than 1.3 (classic LFO layout) with LFO 5
+in Hz or ENV mode would complete the LFO 5-8 switch record, but only if such
+a build is available.
 
 ## After saving new fixtures
 

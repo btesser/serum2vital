@@ -139,6 +139,11 @@ positions.  The CLI report groups its notes into `approximation`, `conflict`,
   feedback and cutoff amounts of reverb, delay, chorus, distortion, phaser,
   flanger, compressor and EQ; delay modes and synced divisions
 - macro values and names, preset name, author, bank
+- the Serum 1 controls that are not VST parameters, read from the preset's
+  switch block: Mono/Legato and the polyphony count, portamento Always/Scaled,
+  noise one-shot and pitch tracking, filter keytrack, unison detune range and
+  tuning mode (Linear/Exp/Inv → Vital's detune power), Chaos Mono (Vital
+  random-LFO sync) and S&H (Vital's S&H style)
 
 **Approximated** — reported per preset:
 
@@ -166,7 +171,14 @@ positions.  The CLI report groups its notes into `approximation`, `conflict`,
   per-note settings, macros 5–8 and LFOs 9–10
 - the LFO 5–8 sync switches in presets from old Serum builds (assumed synced
   and free-running; only reported when those LFOs are used)
-- Serum 1's Note-on Alt, Noise-osc and Fixed modulation sources
+- Serum 1's Note-on Alt, Noise-osc and Fixed modulation sources; Serum 2's
+  audio-rate (oscillator/filter) and voice-bookkeeping sources
+- the reverb's Plate mode (Vital's reverb has no plate); reported
+
+What the readers still cannot interpret in either file format, and the fixture
+presets that would settle each item, are listed in
+[docs/FORMATS.md](docs/FORMATS.md#known-unknowns) and
+[docs/FIXTURE_PRESETS_TASK.md](docs/FIXTURE_PRESETS_TASK.md).
 
 A converted preset is a structurally faithful starting point, not a bit-exact
 clone. Levels, envelope curves, warp depths and filter drive were calibrated

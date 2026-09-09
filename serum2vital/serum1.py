@@ -17,7 +17,15 @@ Inside the decompressed chunk (all variants):
     0x4972  preset name  / 0x49A0 author / 0x49D0 menu
     0x4A60  macro 1..4 names (0x20 apart)
     0x4AE0  parameters 228..298
+    varies  global switches block (voicing, noise flags, filter keytrack,
+            unison range/tuning, chaos flags): it follows the parameter array,
+            whose length depends on the build, so it is located by content
+            (0x4C48 in current builds, 0x4C44 and 0x4B9C in older ones)
     varies  modulation slots 17..32, located by their 80 80 <n> FF marker
+
+Between the parameters and the FX order block (0x37F0..0x3BE0) Serum keeps a
+per-effect record; the only byte read from it is the reverb's Plate/Hall
+switch.
 
 LFO shapes and per-LFO switches come in two layouts:
 
@@ -81,6 +89,37 @@ NEW_OFF_Y = 0x1E10
 NEW_OFF_FLAGS = 0x2D08
 NEW_OFF_NPTS = 0x2D10
 
+# Global switches block: float32 fields, one per non-automatable control.  The
+# block follows the parameter array and moves with the number of parameters
+# in the writing build; SETTINGS_BASES lists the starts seen in the library
+# (current builds first).  Field meanings come from the single-change fixtures
+# in DebugPresets/serum1 (17-21), from rendering crafted variants through the
+# plugin (noise flags, chaos flags) and from the library-wide correlation of
+# each field with the parameters it belongs to (docs/FORMATS.md).
+SETTINGS_BASES = (0x4C48, 0x4C44, 0x4B9C)
+SETTINGS_SIZE = 0x64
+SET_UNISON_TUNING_A = 0x08   # index / 4: Linear, Super, Exp, Inv, Random
+SET_UNISON_TUNING_B = 0x0C
+SET_MONO = 0x10
+SET_LEGATO = 0x14
+SET_PORTA_ALWAYS = 0x18
+SET_PORTA_SCALED = 0x1C
+SET_NOISE_ONE_SHOT = 0x24
+SET_NOISE_PITCH_TRACK = 0x28
+SET_POLYPHONY = 0x2C         # (voices - 1) / 31
+SET_FILTER_KEYTRACK = 0x34
+SET_UNISON_RANGE_A = 0x38    # semitones / 48
+SET_UNISON_RANGE_B = 0x3C
+SET_CHAOS_MONO = (0x40, 0x44)
+SET_CHAOS_SH = (0x50, 0x54)
+SET_REVERB_HALL = 0x5C       # 1 = Hall (default), 0 = Plate
+UNISON_TUNING_NAMES = ("Linear", "Super", "Exp", "Inv", "Random")
+
+# Per-effect record region: a byte copy of the reverb's Plate/Hall switch
+# (1 = Hall) sits two bytes before the reverb enable mirror at 0x3B06.  Used
+# when the switches block is absent (20-21 KB presets).
+OFF_REVERB_HALL = 0x3B04
+
 # Modulation record: 40 bytes, self-identified by 80 80 <slot> FF at +0x20.
 MOD_RECORD_SIZE = 40
 MOD_MARKER = re.compile(rb"\x80\x80(.)\xff", re.S)
@@ -91,10 +130,8 @@ MOD_OFF_AUX_SOURCE = 0x16   # uint16, secondary ("aux") source
 MOD_OFF_DEST = 0x1A         # uint16, index into the 299-parameter list
 
 # Serum modulation source enum.  Env/LFO/Macro were established by corpus
-# correlation; the rest come from a fixture preset with all sixteen matrix
-# slots assigned in a known order (DebugPresets/serum1/11 sources.fxp).
-# 15 and 19 are the two menu entries not covered by that fixture; the manual
-# lists channel aftertouch and the noise oscillator as the remaining sources.
+# correlation; the rest come from fixture presets with matrix slots assigned
+# in a known order (DebugPresets/serum1/11 sources.fxp and 11b sources extra.fxp).
 MOD_SOURCES = {
     1: "mod_wheel",
     2: "env_1", 3: "env_2", 4: "env_3",
@@ -102,11 +139,11 @@ MOD_SOURCES = {
     9: "lfo_5", 10: "lfo_6", 11: "lfo_7", 12: "lfo_8",
     13: "velocity",
     14: "note",
-    15: "aftertouch",        # probable (not in the fixture)
+    15: "aftertouch",        # channel aftertouch (fixture 11b)
     16: "poly_aftertouch",
     17: "chaos_1",
     18: "chaos_2",
-    19: "noise_osc",         # probable (not in the fixture)
+    19: "noise_osc",         # fixture 11b
     20: "note_random_1",
     21: "note_random_2",
     22: "note_alt_1",
@@ -189,6 +226,26 @@ class LfoSettings:
 
 
 @dataclass
+class GlobalSettings:
+    """Non-automatable switches: voicing, noise, filter, unison, chaos, reverb."""
+
+    mono: bool = False
+    legato: bool = False
+    polyphony: int = 8
+    porta_always: bool = False
+    porta_scaled: bool = False
+    noise_one_shot: bool = False
+    noise_pitch_track: bool = False
+    filter_keytrack: bool = False
+    unison_range: tuple[float, float] = (2.0, 2.0)      # semitones, osc A / B
+    unison_tuning: tuple[str, str] = ("Linear", "Linear")
+    chaos_mono: tuple[bool, bool] = (False, False)
+    chaos_sh: tuple[bool, bool] = (False, False)
+    reverb_hall: bool = True
+    known: bool = True           # False when the block could not be located
+
+
+@dataclass
 class LfoShape:
     """A Serum LFO curve: points in 0..1 with a per-segment tension value."""
 
@@ -215,6 +272,7 @@ class Serum1Patch:
     mod_slots: list[ModSlot]
     lfo_shapes: list[LfoShape]    # 8 entries
     fx_order: list[int] | None = None   # rack position per FX_ORDER_NAMES entry
+    settings: GlobalSettings = field(default_factory=GlobalSettings)
     layout: str = "classic"       # "classic" or "new"
     source_path: str = ""
     version: str = "serum1"
@@ -329,6 +387,68 @@ def _read_fx_order(blob: bytes) -> list[int] | None:
     return order if sorted(order) == list(range(10)) else None
 
 
+def _f32(blob: bytes, offset: int) -> float:
+    return struct.unpack_from("<f", blob, offset)[0]
+
+
+def _settings_base(blob: bytes) -> int | None:
+    """Locate the global switches block by its invariants.
+
+    Four landmarks identify it: 0.5 at +0x00 and +0x20, 1.0 at +0x30 and a
+    polyphony value at +0x2C that is an exact (n - 1)/31.  Three of the four
+    are enough (a handful of presets have the +0x00 field at zero).
+    """
+    best: tuple[int, int] | None = None
+    for base in SETTINGS_BASES:
+        if base + SETTINGS_SIZE > len(blob):
+            continue
+        poly = _f32(blob, base + SET_POLYPHONY)
+        score = (
+            int(abs(_f32(blob, base) - 0.5) < 1e-5)
+            + int(abs(_f32(blob, base + 0x20) - 0.5) < 1e-5)
+            + int(abs(_f32(blob, base + 0x30) - 1.0) < 1e-5)
+            + int(0.0 < poly <= 1.0 and abs(poly * 31 - round(poly * 31)) < 1e-3)
+        )
+        if best is None or score > best[0]:
+            best = (score, base)
+    return best[1] if best is not None and best[0] >= 3 else None
+
+
+def _flag(blob: bytes, offset: int) -> bool:
+    return _f32(blob, offset) > 0.5
+
+
+def _read_settings(blob: bytes) -> GlobalSettings:
+    base = _settings_base(blob)
+    hall = blob[OFF_REVERB_HALL] == 1 if len(blob) > OFF_REVERB_HALL and blob[OFF_REVERB_HALL] in (0, 1) else True
+    if base is None:
+        return GlobalSettings(reverb_hall=hall, known=False)
+
+    def tuning(offset: int) -> str:
+        index = round(_f32(blob, base + offset) * 4)
+        return UNISON_TUNING_NAMES[index] if 0 <= index < len(UNISON_TUNING_NAMES) else "Linear"
+
+    def semitones(offset: int) -> float:
+        return max(0.0, min(48.0, 48.0 * _f32(blob, base + offset)))
+
+    poly = int(round(_f32(blob, base + SET_POLYPHONY) * 31)) + 1
+    return GlobalSettings(
+        mono=_flag(blob, base + SET_MONO),
+        legato=_flag(blob, base + SET_LEGATO),
+        polyphony=max(1, min(32, poly)),
+        porta_always=_flag(blob, base + SET_PORTA_ALWAYS),
+        porta_scaled=_flag(blob, base + SET_PORTA_SCALED),
+        noise_one_shot=_flag(blob, base + SET_NOISE_ONE_SHOT),
+        noise_pitch_track=_flag(blob, base + SET_NOISE_PITCH_TRACK),
+        filter_keytrack=_flag(blob, base + SET_FILTER_KEYTRACK),
+        unison_range=(semitones(SET_UNISON_RANGE_A), semitones(SET_UNISON_RANGE_B)),
+        unison_tuning=(tuning(SET_UNISON_TUNING_A), tuning(SET_UNISON_TUNING_B)),
+        chaos_mono=tuple(_flag(blob, base + o) for o in SET_CHAOS_MONO),
+        chaos_sh=tuple(_flag(blob, base + o) for o in SET_CHAOS_SH),
+        reverb_hall=_flag(blob, base + SET_REVERB_HALL),
+    )
+
+
 def _read_mod_slots(blob: bytes) -> list[ModSlot]:
     """Find every modulation record by its 80 80 <slot> FF marker."""
     slots: dict[int, ModSlot] = {}
@@ -436,6 +556,7 @@ def read(path: str) -> Serum1Patch:
         mod_slots=_read_mod_slots(blob),
         lfo_shapes=shapes,
         fx_order=_read_fx_order(blob),
+        settings=_read_settings(blob),
         layout=layout,
         source_path=path,
     )
