@@ -35,11 +35,21 @@
   filter wobbles inverted, arps mirrored), and each segment took its
   neighbour's curvature. Confirmed by rendering crafted 1.3 fixtures: the
   converted default, trigger-mode and multi-point shapes now track Serum's
-  level envelope cycle for cycle. 31% of the Serum 1 factory library uses
-  this layout, including "ARP - Fine Wine" and most of the newer arps.
+  level envelope cycle for cycle. The nine factory folders are older,
+  classic-layout files, but about a third of a typical library (every pack
+  saved from Serum 1.3 or later, e.g. "ARP - Fine Wine" and the Cyberpunk
+  arps) uses this layout; on the 30-preset arp set the loudness-envelope
+  correlation went from 0.33 to 0.68 and the median distance from 16.4 to
+  13.8. Over the 600 factory clips the median distance moved 13.7 → 13.5.
 * LFO smoothing law: Serum's Smooth knob is close to inaudible below 50%
   (measured on a step LFO), so it now maps as 0.5·s⁶ seconds instead of 0.5·s;
   the old law smeared every 10%-smoothed step arp by 50 ms.
+* Serum 2 is now hosted headlessly (`tools/serum2_host.py`, DawDreamer with the
+  VST3 state split into its processor/controller containers), so Serum 2 FX
+  and modulation laws can be measured by rendering crafted presets, and
+  `tools/listen.py` renders Serum 2 originals next to their conversions.
+* Listening site: an "arp" set (the 30 Cyberpunk arps, all new-layout files)
+  joins the nine factory sets and the reeses so the LFO fix can be heard.
 * Aux-source routings were twice as strong as intended: Vital's per-routing
   amount parameter spans −1..1, so meta-modulating it by x moves the amount
   by 2x (measured: 23 st vs 41 st pitch swing). The aux link now carries half
