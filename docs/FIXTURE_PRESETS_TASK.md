@@ -200,9 +200,12 @@ were shown never to have been saved, and the aux id encoding is settled by the
 library. The remaining Serum 1 block fields (+0x04, +0x30, +0x4C, +0x58,
 +0x60) change nothing audible; no fixture is requested for them.
 
-The Serum 2 rows above are the only route to those laws: neither DawDreamer
-nor pedalboard can push state into Serum2.vst3 on this machine (see
-`FORMATS.md`, "Known unknowns").
+The Serum 2 rows above are no longer the only route to those laws: since
+2026-09-10 `tools/serum2_host.py` loads a `.SerumPreset` into Serum2.vst3
+headlessly (DawDreamer) and renders it, so a crafted preset (edit the CBOR
+document, rebuild the container) can replace a GUI-saved fixture for the
+delay-time, FX-rate and reverb questions. Source ids 39-44 still need the
+menu capture, since the id-to-label mapping is not observable from audio.
 
 ## After saving new fixtures
 

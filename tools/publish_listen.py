@@ -96,7 +96,7 @@ function render(){
   const body = list.map((r, i) => `<tr><td>${i + 1}</td>
     <td><b>${esc(r.name)}</b><br><small class="cat">${esc(r.category || '')}</small><div>${metric(r.metrics)}</div>
       <ul class="notes">${(r.notes||[]).map(n => `<li><span class="badge ${esc(noteKind(n))}">${esc(noteKind(n))}</span>${esc(n.replace(/^[^:]*:\s*/, ''))}</li>`).join('')}</ul></td>
-    <td>${r.serum ? `<audio controls preload="none" src="${encodeURIComponent(r.serum)}"></audio>` : (r.source === 'serum2' ? '<small>Serum 2 source: no original render</small>' : '<small>no source</small>')}</td>
+    <td>${r.serum ? `<audio controls preload="none" src="${encodeURIComponent(r.serum)}"></audio>` : (r.source !== 'none' ? '<small>no original render</small>' : '<small>no source</small>')}</td>
     <td>${r.vital ? `<audio controls preload="none" src="${encodeURIComponent(r.vital)}"></audio>` : '<small>render failed</small>'}</td></tr>`).join('');
   document.getElementById('tbody').innerHTML = body;
 }

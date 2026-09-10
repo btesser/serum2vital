@@ -174,7 +174,12 @@ preset to pin down (section 7). *Resolution (section 10): pinned down by
 
 * **Serum side**: DawDreamer loads Serum VST2, `load_preset(fxp)` works, every
   parameter's display text is readable, and MIDI files render to audio.
-  The host also loads Vital and Serum 2 VST3.
+  The host also loads Vital and Serum 2 VST3. *Serum 2 became drivable on
+  2026-09-10 (`tools/serum2_host.py`): its VST3 state is a processor and a
+  controller `XferJson` container, a `.SerumPreset` is the union of the two
+  CBOR maps, and Serum rejects (silently keeps its old state) any container
+  that carries the other side's keys, which is what made `load_state` look
+  broken. Splitting the preset by each container's own key set loads it.*
 * **Vital side**: pedalboard loads Vital VST3; its state is JUCE base64
   (`<size>.<data>`, alphabet `.A-Za-z0-9+/`) wrapping `VstW` + `CcnK/FBCh`
   with the `.vital` JSON at offset 176. Decoding works; encoding is the inverse.
@@ -357,8 +362,10 @@ of `FIXTURE_PRESETS_TASK.md`):
   model, style 4, blend 1, resonance 1) goes almost silent. Seen on the
   factory preset "FX - Short Overtone Velocity 2" (velocity → cutoff +94%);
   the remaining factory presets all render. Headless Serum 2
-  hosting is blocked (DawDreamer cannot set its state, pedalboard cannot scan
-  it), so these need fixtures. The aux id encoding is settled by the library.
+  hosting was blocked until 2026-09-10 (see §6); `tools/serum2_host.py` now
+  loads `.SerumPreset` files, so the Serum 2 laws can be measured by
+  rendering instead of waiting for fixtures. The aux id encoding is settled
+  by the library.
 * Serum's unison detune width is narrower than Vital's at low knob values
   (±6 vs ±12 cents at 25%, equal at 75%); the amount curve was left as
   calibrated.
@@ -411,8 +418,8 @@ envelope correlation 0.609.
   (0.99 correlation once applied). Result: envelope correlation 0.60 → 0.72,
   median distance 12.30 → 11.37, 33 presets better / 15 worse. Flipping the
   curvature sign as well was tried and rejected (7 better / 14 worse).
-  Serum 2's LFO axis was not re-measured (no headless host) and keeps the
-  previous convention.
+  Serum 2's LFO axis was not re-measured at the time (no headless host) and
+  keeps the previous convention; `tools/serum2_host.py` can now render it.
 * **Flat LFO curves break Vital.** A curve whose points all share one value
   makes Vital's voice nearly silent even when the LFO is not routed; the
   writer never emits one.

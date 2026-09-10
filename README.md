@@ -206,6 +206,10 @@ instead of argued about:
   pedalboard), injects a preset, reads the parameters back and renders a note.
 * `tools/serum_host.py preset.fxp --render out.wav` does the same for Serum
   (VST2, via DawDreamer) and can print any parameter's display text.
+* `tools/serum2_host.py preset.SerumPreset --render out.wav` does the same
+  for Serum 2 (VST3, via DawDreamer); it rebuilds the plugin's two `XferJson`
+  state containers from the preset, which is the part a plain state load
+  gets wrong.
 * `tools/ab_render.py preset.fxp preset.vital` renders the same note through
   both and prints level, spectral centroid and stereo correlation.
 * `tools/listen.py "out/.../BASS/REESE" --out out/listen/reese` renders every
@@ -240,7 +244,7 @@ tools/
   gen_vital_defaults.py   regenerates vital_defaults.py from Vital's source
   gen_serum_tables.py     regenerates serum_tables.py from serum_display_tables.json
   serum_display_tables.json  what the Serum plugin displays, captured headlessly
-  serum_host.py / vital_host.py / ab_render.py   headless hosts for validation
+  serum_host.py / serum2_host.py / vital_host.py / ab_render.py   headless hosts for validation
 docs/
   FORMATS.md         how all three formats are laid out, and how that was verified
   FINDINGS_AND_PLAN.md   the investigation log: what was measured and why

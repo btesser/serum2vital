@@ -8,8 +8,8 @@ default holds C2, plays a short riff and holds C2 again so both the sustain and
 the note-to-note behaviour can be heard.
 
 For every .vital under the folder, finds the Serum source with the same stem
-under the Serum root (.fxp or .SerumPreset), renders both (Serum 1 only; the
-Serum 2 plugin cannot be driven headlessly here) and writes
+under the Serum root (.fxp or .SerumPreset), renders both (Serum 1 through
+tools/serum_host.py, Serum 2 through tools/serum2_host.py) and writes
 "<name> - serum.wav" / "<name> - vital.wav" plus an index.html player.
 """
 
@@ -28,13 +28,16 @@ TOOLS = Path(__file__).resolve().parent
 SR = 44100
 DEFAULT_PHRASE = "48:0:2.5,48:2.7:0.35,51:3.2:0.35,53:3.7:0.35,55:4.2:0.35,48:4.7:2"
 
+# Each Serum generation renders in its own subprocess (DawDreamer-hosted
+# plugins crash at interpreter exit); the host module/class is substituted in.
+SERUM_HOSTS = {"serum1": ("serum_host", "SerumHost"), "serum2": ("serum2_host", "Serum2Host")}
 SERUM_BATCH = r'''
 import os, sys, json
 sys.path.insert(0, %(tools)r)
 import numpy as np
-from serum_host import SerumHost, write_wav
+from %(module)s import %(cls)s as Host, write_wav
 jobs = json.load(open(sys.argv[1], encoding="utf-8"))
-host = SerumHost(sample_rate=%(sr)d).load()
+host = Host(sample_rate=%(sr)d).load()
 notes = %(notes)r
 for fxp, wav in jobs:
     try:
@@ -43,7 +46,7 @@ for fxp, wav in jobs:
         write_wav(wav, audio, %(sr)d)
         print("ok", wav)
     except Exception as exc:
-        print("fail", fxp, exc)
+        print("fail\t" + fxp + "\t" + str(exc).replace("\n", " "))
     sys.stdout.flush()
 os._exit(0)
 '''
@@ -160,7 +163,7 @@ def main(argv=None) -> int:
 
     host = VitalHost().load()
     rows = []
-    serum_jobs = []
+    serum_jobs: dict[str, list] = {kind: [] for kind in SERUM_HOSTS}
     for v in vitals:
         stem = v.stem
         vital_wav = args.out / f"{stem} - vital.wav"
@@ -178,10 +181,9 @@ def main(argv=None) -> int:
         if src:
             s = src[0]
             kind = "serum1" if s.suffix.lower() == ".fxp" else "serum2"
-            if kind == "serum1":
-                serum_wav = args.out / f"{stem} - serum.wav"
-                if not (args.reuse and serum_wav.exists()):
-                    serum_jobs.append((str(s), str(serum_wav)))
+            serum_wav = args.out / f"{stem} - serum.wav"
+            if not (args.reuse and serum_wav.exists()):
+                serum_jobs[kind].append((str(s), str(serum_wav)))
         if v in forced_sources:
             category = str(forced_sources[v].parent.relative_to(args.sources.resolve())).replace("\\", "/").strip(".")
         else:
@@ -191,16 +193,28 @@ def main(argv=None) -> int:
                      "vital": vital_wav.name if vital_ok else None, "serum": serum_wav.name if serum_wav else None,
                      "source": kind, "source_path": str(src[0]) if src else "", "ambiguous": len(src) > 1})
 
-    if serum_jobs:
-        jobs_file = args.out / "_serum_jobs.json"
-        jobs_file.write_text(json.dumps(serum_jobs), encoding="utf-8")
-        script = SERUM_BATCH % {"tools": str(TOOLS), "sr": SR, "notes": notes, "seconds": seconds}
-        proc = subprocess.run([sys.executable, "-c", script, str(jobs_file)], capture_output=True, text=True)
-        failed = {line.split(" ", 2)[1] for line in proc.stdout.splitlines() if line.startswith("fail")}
-        for row in rows:
-            if row["serum"] and (row["source_path"] in failed or not (args.out / row["serum"]).exists()):
-                row["serum"] = None
+    failed: set[str] = set()
+    for kind, jobs in serum_jobs.items():
+        if not jobs:
+            continue
+        module, cls = SERUM_HOSTS[kind]
+        jobs_file = args.out / f"_{kind}_jobs.json"
+        jobs_file.write_text(json.dumps(jobs), encoding="utf-8")
+        script = SERUM_BATCH % {"tools": str(TOOLS), "module": module, "cls": cls, "sr": SR, "notes": notes,
+                                "seconds": seconds}
+        proc = subprocess.run([sys.executable, "-c", script, str(jobs_file)], capture_output=True, text=True,
+                              encoding="utf-8", errors="replace")
+        for line in proc.stdout.splitlines():
+            if line.startswith("fail\t"):
+                _, path, reason = line.split("\t", 2)
+                failed.add(path)
+                print(f"{kind} failed: {Path(path).stem}: {reason}")
+        if proc.returncode not in (0, None) and not proc.stdout.strip():
+            print(f"{kind} host did not start: {proc.stderr.strip()[-400:]}")
         jobs_file.unlink(missing_ok=True)
+    for row in rows:
+        if row["serum"] and (row["source_path"] in failed or not (args.out / row["serum"]).exists()):
+            row["serum"] = None
 
     parts = [
         "<!doctype html><meta charset='utf-8'><title>Listening: %s</title>" % html.escape(args.vital_folder.name),
@@ -209,12 +223,12 @@ def main(argv=None) -> int:
         "small{color:#999}</style>",
         f"<h1>{html.escape(args.vital_folder.name)}: {len(rows)} presets</h1>",
         f"<p><small>Phrase: {html.escape(args.phrase)} (MIDI note:start:duration; transpose {args.transpose:+d}), {seconds:g} s per clip.</small></p>",
-        "<p>Left: the Serum original (Serum 1 only). Right: the converted Vital preset. Play them in Vital itself for the real thing; these are headless renders.</p>",
+        "<p>Left: the Serum original (Serum 1 via VST2, Serum 2 via VST3). Right: the converted Vital preset. Play them in Vital itself for the real thing; these are headless renders.</p>",
         "<table><tr><th>#</th><th>preset</th><th>category</th><th>Serum</th><th>Vital</th></tr>",
     ]
     for i, r in enumerate(rows, 1):
         serum_cell = f"<audio controls preload='none' src='{html.escape(r['serum'])}'></audio>" if r["serum"] else (
-            "<small>Serum 2 source: no headless render</small>" if r["source"] == "serum2" else "<small>source not found</small>")
+            "<small>Serum render failed</small>" if r["source"] != "none" else "<small>source not found</small>")
         vital_cell = f"<audio controls preload='none' src='{html.escape(r['vital'])}'></audio>" if r["vital"] else "<small>render failed</small>"
         note = " <small>(name shared by several source packs)</small>" if r["ambiguous"] else ""
         parts.append(f"<tr><td>{i}</td><td>{html.escape(r['name'])}{note}</td><td><small>{html.escape(r['category'])}</small></td><td>{serum_cell}</td><td>{vital_cell}</td></tr>")
