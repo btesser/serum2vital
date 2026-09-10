@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.5.0 (2026-09-10)
 
 * Serum 1 LFO shapes were upside down. Rendering LFO-to-level routings through
   both plugins showed that Serum's stored y and Vital's LFO JSON share the
