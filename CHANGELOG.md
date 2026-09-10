@@ -2,6 +2,17 @@
 
 ## Unreleased
 
+* Serum 2 can now be driven headlessly. `tools/serum2_host.py` loads
+  Serum2.vst3 through DawDreamer, injects a `.SerumPreset`, reads parameters
+  back and renders. The block was a state-format detail, not the host: Serum
+  2's VST3 state is a processor container plus a controller container, a
+  `.SerumPreset` is the union of both, and Serum silently keeps its previous
+  state when a container carries the other side's keys. The host splits the
+  preset by each container's own key set. `tools/listen.py` renders Serum 2
+  originals next to their conversions like it does for Serum 1.
+
+## 0.5.1 (2026-09-10)
+
 * Pitch modulation ranges. A Serum modulation amount is a fraction of the
   Serum parameter's range, so routings to Semi (±12 st) and CoarsePit (±64 st,
   measured) must be rescaled onto Vital's ±48 st transpose; they were passed
@@ -10,6 +21,25 @@
   Serum 2 path, where Pitch and Octave routings were also unmapped. Serum 1's
   static CoarsePit value is now added to the oscillator transpose (it was
   ignored).
+* Serum 1 matrix "type" column decoded: byte +0x0C of a matrix record is the
+  unipolar/bipolar switch (set in 12% of routings, almost all LFO → pitch).
+  A bipolar routing swings ±amount·range/2 around the knob (measured on "SQ
+  Minor Arp": 12 − 24·y semitones), which is Vital's bipolar flag; it was
+  being converted as one-sided, so bipolar arps and vibratos sat a whole
+  modulation range too high.
+* Serum 1 new-layout (1.3+) LFO shapes were read one entry off: each LFO
+  block is an 8-byte header followed by 480 curve, 480 x and 480 y doubles,
+  but the reader took y from 8 bytes too far and the curves from 8 bytes too
+  early. The first y value was dropped, so the default shape read as 0,1,1
+  instead of 1,0,1 and every new-layout LFO converted upside down (level and
+  filter wobbles inverted, arps mirrored), and each segment took its
+  neighbour's curvature. Confirmed by rendering crafted 1.3 fixtures: the
+  converted default, trigger-mode and multi-point shapes now track Serum's
+  level envelope cycle for cycle. 31% of the Serum 1 factory library uses
+  this layout, including "ARP - Fine Wine" and most of the newer arps.
+* LFO smoothing law: Serum's Smooth knob is close to inaudible below 50%
+  (measured on a step LFO), so it now maps as 0.5·s⁶ seconds instead of 0.5·s;
+  the old law smeared every 10%-smoothed step arp by 50 ms.
 * Aux-source routings were twice as strong as intended: Vital's per-routing
   amount parameter spans −1..1, so meta-modulating it by x moves the amount
   by 2x (measured: 23 st vs 41 st pitch swing). The aux link now carries half

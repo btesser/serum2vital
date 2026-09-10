@@ -141,6 +141,7 @@ is how several factory sequences converted silent before 0.4.1).
 | +0x00 | float32 | current/smoothed amount (unverified; not read by the converter) |
 | +0x04 | float32 | amount, bipolar −1..1 |
 | +0x08 | float32 | output range (1.0 = 100%) |
+| +0x0C | uint8 | matrix **type**: 0 unipolar, 1 bipolar. Set in 12% of active routings, mostly LFO → Fine/CoarsePit/Semi/Mast.Tun; measured on "SQ Minor Arp": an LFO → Semi routing at +100% with this byte set plays 12 − 24·y semitones, i.e. ±amount·range/2 around the knob |
 | +0x14 | uint16 | source id |
 | +0x16 | uint16 | auxiliary source id |
 | +0x1A | uint16 | destination — an index into the 299-parameter list |
@@ -271,12 +272,20 @@ zero and eight LFO blocks of `0x2D28` bytes start at `0x84D8`:
 
 | offset in block | contents |
 |-----------------|----------|
-| +0x0000 | tension, 481 float64 |
-| +0x0F08 | x, 481 float64 |
-| +0x1E10 | y, 479 float64 |
+| +0x0000 | one float64, purpose unknown (0 in most files, a stray 0.2–0.3 in a few LFO 1 blocks) |
+| +0x0008 | tension, 480 float64, 0.5 = straight |
+| +0x0F08 | x, 480 float64 |
+| +0x1E08 | y, 480 float64, 0 = top of the display (same as the classic layout; the default shape is `1, 0, 1`) |
 | +0x2D08 | six flag bytes in the same order as the classic record: anchor, Hz, dotted, triplet, not-off, env |
 | +0x2D10 | int32 point count |
 | +0x2D18 | int32 array length (65 or 481), float32 rate copy (unverified; not read by the converter) |
+
+Before 0.5.1 the converter read these arrays from +0x0000 / +0x0F08 /
++0x1E10 (481, 481 and 479 entries), which dropped the first y value and shifted
+every tension by one segment: the default shape read as `0, 1, 1` and every
+new-layout LFO came out upside down, with the wrong curvature. The three arrays
+of 480 doubles plus the 8-byte header end exactly at the flag bytes
+(8 + 3·480·8 = 0x2D08).
 
 Blocks 9-12 follow the same layout and are not LFOs (probably the warp
 remap graphs).  These flag positions were established with single-change
@@ -406,6 +415,7 @@ fixtures that would settle the items marked *fixture*.
 | LFO 5–8 switches in the classic layout | confirmed absent: the record at 0x33D0 holds only the four ANCH bytes, then zeros or heap junk, in every one of the 611 classic-layout presets that route LFO 5–8; those builds did not save the switches, so "synced, free-running" is the only possible reading | nothing to settle |
 | `Mast.Tun` parameter (index 80) range | measured at (v − 0.5) × 128 semitones on two points (±0.1 → ±12.8 st); never non-default in the 15k-preset library, so it is not converted statically | a third point with a wider pitch tracker if ever needed |
 | Second zlib stream in the chunk (16 KB, identical in every preset) and the uint32 before the length word | preserved verbatim by `tools/craft_fxp.py` | not needed |
+| New-layout LFO block +0x0000 (one float64 before the tension array; 0 in most files, 0.2–0.3 in a few LFO 1 blocks) | not read; no audible effect found | nothing to settle unless a shape mismatch points at it |
 | Modulation record +0x00 (probably the smoothed amount) and +0x18 (a remapping of the destination index) | not read | not needed |
 | Per-effect record bytes other than the reverb Plate/Hall copy | not read (all mirror parameters) | not needed |
 
@@ -415,7 +425,7 @@ fixtures that would settle the items marked *fixture*.
 |------|--------|---------------|
 | Modulation source ids 39–44 (47, 48 also seen) | reported as unknown (about one routing per ten library presets, in factory presets of every 2.0.x version, including Steve Duda's own, so they are current sources that the `12`/`12b` menu capture missed rather than legacy ids). 39 and 41 mostly drive pan, fine tune and cutoff with small amounts; 40 and 42 drive LFO point mod buses and table position | *fixture*: a matrix with every Source menu entry (including any submenus) in order |
 | Aux source ids | confirmed to share the source enum by the library: the aux column holds 1 (mod wheel, 232 uses), 16 (velocity), 18 (aftertouch) and 25–32 (macros) almost exclusively | nothing to settle |
-| Hosting Serum 2 headlessly | blocked: DawDreamer's `load_state` / `load_vst3_preset` do not change Serum2.vst3's state (a plain save/load round trip fails too, and the state is an `XferJson` container with an md5-of-payload `hash` field, so the format itself is understood), and pedalboard refuses to scan the plugin. FX parameters are only exposed as opaque "FX Main Param N" proxies | a host whose VST3 state loading works with Serum 2, or the fixtures below |
+| Hosting Serum 2 headlessly | solved (2026-09-10): `tools/serum2_host.py` loads Serum2.vst3 through DawDreamer, injects a `.SerumPreset` and renders. The VST3 state is two `XferJson` containers (processor and edit controller), each a JSON header (`hash` = md5 of the zstd payload) over a CBOR map keyed by module; a `.SerumPreset` is the union of both maps. Serum silently keeps its previous state when a container carries keys the other side owns (the naive "paste the whole preset into `<IComponent>`" that looked like a broken `load_state`), so the host splits the preset by each container's own key set. pedalboard still cannot scan the plugin (`unsupported plugin format or scan failure`); FX parameters are still only exposed as "FX Main Param N" proxies, but the FX rack state is readable from the processor document | nothing to settle |
 | Synced delay time steps (`FXDelay.kParamTime` when beat-synced) | law anchored on two factory presets | *fixture*: delay stepped through 1/64 … 4 bars |
 | Synced RATE of chorus/flanger/phaser | assumed to snap evenly over 8 bars … 1/32 on the quartic Hz knob | *fixture*: chorus rate stepped through the synced divisions |
 | Reverb `kParamDelay` for the non-plate types (DECAY or PRE-DLY?) | dropped, reported | *fixture*: Hall reverb with a distinctive decay and pre-delay |

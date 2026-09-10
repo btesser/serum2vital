@@ -302,7 +302,7 @@ def apply_lfo_settings(conv: Conversion, slot: int, settings: serum1.LfoSettings
 
 
 def route(conv: Conversion, source: str | None, destination: str, amount: float,
-          aux: str | None = None, what: str = "") -> None:
+          aux: str | None = None, what: str = "", bipolar: bool | None = None) -> None:
     """Add one Serum routing (source x aux x amount -> destination) to Vital."""
     if source is None:
         conv.note(f"unsupported: modulation source {what or '?'} has no Vital counterpart; routing dropped")
@@ -311,7 +311,10 @@ def route(conv: Conversion, source: str | None, destination: str, amount: float,
     if vital_source is None:
         conv.note(f"unsupported: modulation source '{source}' has no Vital counterpart; routing dropped")
         return
-    bipolar = vital_source in BIPOLAR_SOURCES
+    # Serum's matrix "type" column makes any source swing +-amount around the
+    # knob (measured: an LFO -> Semi routing at +100% steps -12..+12 st, i.e.
+    # 24*(0.5 - y)); Vital's bipolar flag has the same law (+-amount*range/2).
+    bipolar = bool(bipolar) or vital_source in BIPOLAR_SOURCES
     if re.match(r"lfo_\d+_(tempo|frequency)$", destination):
         # Serum's rate knob spans about 8 octaves; Vital's tempo list is 12
         # steps of one octave with "freeze" at 0, so a full-range Serum amount
@@ -584,15 +587,23 @@ def _lfos_from_serum1(conv: Conversion, patch: serum1.Serum1Patch) -> None:
         if shape is None:
             continue
         conv.lfos[slot - 1] = lfo_to_vital(
-            shape, name=f"Serum LFO {slot}", invert_y=CALIB["lfo_invert"], close_loop=CALIB["lfo_wrap"],
+            shape, name=f"Serum LFO {slot}", invert_y=CALIB["lfo_invert"],
+            close_loop=CALIB["lfo_wrap"],
             power_sign=-1.0 if CALIB["lfo_power_flip"] else 1.0,
         ) if len(shape.xs) >= 2 else None
         apply_lfo_settings(conv, slot, shape.settings, _p(patch, f"LFO{slot}Rate"), used=f"lfo_{slot}" in used)
 
+        # Serum's SMOOTH knob is nearly inert until its top: rendering a
+        # triangle LFO through the plugin, 10-50% shift its peak by less than
+        # 5 ms while 100% delays it 175 ms and cuts it to a third; Vital's
+        # smooth time of 0.2 s delays the same peak by 55 ms. 0.5*s^6 seconds
+        # reproduces that (8 ms at 50%, 0.5 s at 100%); the old 0.5*s turned
+        # a 10% setting into 50 ms, which smeared step sequences.
         smooth = _p(patch, f"LFO{slot} smooth")
-        conv.set(f"lfo_{slot}_smooth_mode", 1.0 if smooth > 0.001 else 0.0)
-        if smooth > 0.001:
-            conv.set(f"lfo_{slot}_smooth_time", math.log2(max(0.002, 0.5 * smooth)))
+        smooth_seconds = 0.5 * smooth ** 6
+        conv.set(f"lfo_{slot}_smooth_mode", 1.0 if smooth_seconds > 0.003 else 0.0)
+        if smooth_seconds > 0.003:
+            conv.set(f"lfo_{slot}_smooth_time", math.log2(smooth_seconds))
         conv.set(f"lfo_{slot}_fade_time", 4.0 * _p(patch, f"LFO{slot} Rise"))
         conv.set(f"lfo_{slot}_delay_time", 4.0 * _p(patch, f"LFO{slot} Delay"))
 
@@ -842,7 +853,7 @@ def _modulations_from_serum1(conv: Conversion, patch: serum1.Serum1Patch) -> Non
         # Octave +-4 oct, all landing on Vital's +-48 st transpose).
         amount *= DEST_AMOUNT_SCALE.get(dest_name, 1.0)
         route(conv, slot.source_name, vital_dest, amount, slot.aux_source_name,
-              what=f"id {slot.source}")
+              what=f"id {slot.source}", bipolar=slot.bipolar)
 
 
 def _lfo_rate_dest(number: int):

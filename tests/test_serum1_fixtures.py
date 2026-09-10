@@ -216,9 +216,19 @@ def test_matrix_record_marker_tolerates_first_byte(tmp_path):
     path = craft_fxp.write(FIX / "00 init.fxp", tmp_path / "marker.fxp", [(40, bytes(record))])
     p = serum1.read(str(path))
     slot = [s for s in p.mod_slots if s.slot == 2][0]
-    assert (slot.source_name, slot.dest_name, round(slot.amount, 2), slot.active) == ("lfo_1", "A Vol", 0.77, True)
+    assert (slot.source_name, slot.dest_name, round(slot.amount, 2), slot.active, slot.bipolar) == ("lfo_1", "A Vol", 0.77, True, False)
     conv = mapping.convert_serum1(p)
-    assert any(m["source"] == "lfo_1" and m["destination"] == "osc_1_level" for m in conv.modulations)
+    index = [i for i, m in enumerate(conv.modulations) if m["source"] == "lfo_1" and m["destination"] == "osc_1_level"][0]
+    assert conv.settings[f"modulation_{index + 1}_bipolar"] == 0.0
+
+    # Byte +0x0C is the matrix type: 1 = bipolar, which becomes Vital's bipolar flag.
+    record[0x0C] = 1
+    path = craft_fxp.write(FIX / "00 init.fxp", tmp_path / "bipolar.fxp", [(40, bytes(record))])
+    p = serum1.read(str(path))
+    assert [s for s in p.mod_slots if s.slot == 2][0].bipolar is True
+    conv = mapping.convert_serum1(p)
+    index = [i for i, m in enumerate(conv.modulations) if m["source"] == "lfo_1" and m["destination"] == "osc_1_level"][0]
+    assert conv.settings[f"modulation_{index + 1}_bipolar"] == 1.0
 
 
 def test_init_switch_block_globals():
@@ -246,3 +256,21 @@ def test_isolated_gui_switch_fixtures(name, changes):
         expected_params[NAME_TO_INDEX["Rev Enable"]] = 1.0
     assert list(patch.params) == expected_params
     assert patch.fx_rack == baseline.fx_rack
+
+
+def test_new_layout_arrays_follow_eight_byte_header():
+    """Serum 1.3 files: 8-byte header, then 480 curves, 480 x, 480 y."""
+    from serum2vital.serum1 import NEW_LFO_BASE, NEW_LFO_STRIDE, _read_new_lfo
+    import struct
+    blob = bytearray(NEW_LFO_BASE + 8 * NEW_LFO_STRIDE + 64)
+    base = NEW_LFO_BASE
+    # header double then curves 0.25, 0.75 for a three-point shape
+    struct.pack_into("<3d", blob, base, 123.0, 0.25, 0.75)
+    struct.pack_into("<3d", blob, base + 0xF08, 0.0, 0.5, 1.0)
+    struct.pack_into("<3d", blob, base + 0x1E08, 1.0, 0.0, 1.0)
+    blob[base + 0x2D08 : base + 0x2D08 + 6] = bytes([1, 0, 0, 0, 1, 0])
+    shape = _read_new_lfo(bytes(blob), 0)
+    assert shape.xs == [0.0, 0.5, 1.0]
+    assert shape.curves == [0.25, 0.75]
+    assert shape.ys == [1.0, 0.0, 1.0]
+    assert shape.settings.mode == "trig"

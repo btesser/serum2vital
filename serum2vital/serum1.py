@@ -83,9 +83,9 @@ CLASSIC_SETTINGS_5_8 = 0x33D0              # LFO 5-8: anchor bytes only
 # New LFO layout.
 NEW_LFO_BASE = 0x84D8
 NEW_LFO_STRIDE = 0x2D28
-NEW_ARRAY_LEN = 481
+NEW_ARRAY_LEN = 480
 NEW_OFF_X = 0xF08
-NEW_OFF_Y = 0x1E10
+NEW_OFF_Y = 0x1E08
 NEW_OFF_FLAGS = 0x2D08
 NEW_OFF_NPTS = 0x2D10
 
@@ -132,6 +132,7 @@ MOD_MARKER = re.compile(rb"(?=\x80(.)\xff)", re.S)   # lookahead: markers may ov
 MOD_MARKER_OFFSET = 0x21
 MOD_OFF_AMOUNT = 0x04       # float32, bipolar -1..1
 MOD_OFF_OUT = 0x08          # float32, output range scaler (1.0 = 100%)
+MOD_OFF_TYPE = 0x0C         # uint8, matrix "type": 0 unipolar, 1 bipolar (centred on the knob)
 MOD_OFF_SOURCE = 0x14       # uint16, Serum source enum
 MOD_OFF_AUX_SOURCE = 0x16   # uint16, secondary ("aux") source
 MOD_OFF_DEST = 0x1A         # uint16, index into the 299-parameter list
@@ -189,6 +190,7 @@ class ModSlot:
     dest: int
     amount: float          # -1..1
     out_range: float       # 1.0 == full range
+    bipolar: bool = False  # matrix type column: the source swings +-amount around the knob
 
     @property
     def source_name(self) -> str | None:
@@ -366,9 +368,13 @@ def _read_new_lfo(blob: bytes, index: int) -> LfoShape:
         settings = LfoSettings.from_flags(flags)
     else:
         settings = LfoSettings(known=False)
-    curves = _doubles(blob, base, NEW_ARRAY_LEN)
+    # 8-byte header, then three arrays of 480 float64: curves, x, y (the
+    # three arrays end exactly at the flag bytes).  Reading y from +0x1E10
+    # dropped the first point, which made the default shape look like 0,1,1
+    # instead of 1,0,1 and every new-layout curve look upside down.
+    curves = _doubles(blob, base + 8, NEW_ARRAY_LEN)
     xs = _doubles(blob, base + NEW_OFF_X, NEW_ARRAY_LEN)
-    ys = _doubles(blob, base + NEW_OFF_Y, NEW_ARRAY_LEN - 2)
+    ys = _doubles(blob, base + NEW_OFF_Y, NEW_ARRAY_LEN)
     return _build_shape(curves, xs, ys, settings)
 
 
@@ -488,6 +494,7 @@ def _read_mod_slots(blob: bytes) -> list[ModSlot]:
             dest=dest,
             amount=amount,
             out_range=out_range,
+            bipolar=blob[base + MOD_OFF_TYPE] == 1,
         )
     return [slots[i] for i in sorted(slots)]
 
