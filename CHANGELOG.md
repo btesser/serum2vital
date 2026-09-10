@@ -1,5 +1,20 @@
 # Changelog
 
+## Unreleased
+
+* Pitch modulation ranges. A Serum modulation amount is a fraction of the
+  Serum parameter's range, so routings to Semi (±12 st) and CoarsePit (±64 st,
+  measured) must be rescaled onto Vital's ±48 st transpose; they were passed
+  through 1:1, which played Semi-driven arpeggios and sequences four times too
+  wide (e.g. "ARP - Fine Wine", whose LFO 5 steps A/B Semi). Same fix for the
+  Serum 2 path, where Pitch and Octave routings were also unmapped. Serum 1's
+  static CoarsePit value is now added to the oscillator transpose (it was
+  ignored).
+* Aux-source routings were twice as strong as intended: Vital's per-routing
+  amount parameter spans −1..1, so meta-modulating it by x moves the amount
+  by 2x (measured: 23 st vs 41 st pitch swing). The aux link now carries half
+  the Serum amount, in both the Serum 1 and Serum 2 paths.
+
 ## 0.5.0 (2026-09-10)
 
 * Serum 1 LFO shapes were upside down. Rendering LFO-to-level routings through

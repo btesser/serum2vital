@@ -325,7 +325,11 @@ def route(conv: Conversion, source: str | None, destination: str, amount: float,
         # amount, so the primary amount starts at zero and the aux drives it.
         index = conv.add_modulation(vital_source, destination, 0.0, bipolar)
         if index is not None:
-            conv.add_modulation(vital_aux, f"modulation_{index}_amount", amount, False)
+            # A routing's amount parameter spans -1..1, so a modulation of it
+            # by x moves the amount by 2x; halve so that the aux at full
+            # value yields exactly `amount` (measured: 0.25 gave a 41 st
+            # swing on transpose, the direct routing 23 st).
+            conv.add_modulation(vital_aux, f"modulation_{index}_amount", amount / 2.0, False)
     else:
         conv.add_modulation(vital_source, destination, amount, bipolar)
 
@@ -458,7 +462,13 @@ def _osc_from_serum1(conv: Conversion, patch: serum1.Serum1Patch, letter: str, s
 
     octave = round(_display(patch, f"{letter} Octave"))
     semi = round(_display(patch, f"{letter} Semi"))
-    conv.set(f"{prefix}_transpose", octave * 12 + semi)
+    # CoarsePit is a third pitch control, -64..+64 semitones (measured), that
+    # arps and sequences modulate; its static value adds to the transpose.
+    coarse = round((_p(patch, f"{letter} CoarsePit") - 0.5) * 128.0)
+    transpose = octave * 12 + semi + coarse
+    if abs(transpose) > 48:
+        conv.note(f"approximation: osc {letter} pitch offset {transpose:+d} st exceeds Vital's +-48; clamped")
+    conv.set(f"{prefix}_transpose", max(-48, min(48, transpose)))
     conv.set(f"{prefix}_tune", _display(patch, f"{letter} Fine") / 100.0)
 
     voices = max(1, round(_display(patch, f"{letter} Unison")))
@@ -826,6 +836,11 @@ def _modulations_from_serum1(conv: Conversion, patch: serum1.Serum1Patch) -> Non
         if callable(vital_dest):
             vital_dest = vital_dest(conv)
         amount = slot.amount * max(0.0, min(1.0, slot.out_range))
+        # A Serum amount is a fraction of the Serum parameter's range and a
+        # Vital amount a fraction of the Vital parameter's range; rescale where
+        # the two ranges differ (pitch: Semi is +-12 st, CoarsePit +-64 st,
+        # Octave +-4 oct, all landing on Vital's +-48 st transpose).
+        amount *= DEST_AMOUNT_SCALE.get(dest_name, 1.0)
         route(conv, slot.source_name, vital_dest, amount, slot.aux_source_name,
               what=f"id {slot.source}")
 
@@ -833,6 +848,13 @@ def _modulations_from_serum1(conv: Conversion, patch: serum1.Serum1Patch) -> Non
 def _lfo_rate_dest(number: int):
     return lambda conv: f"lfo_{number}_frequency" if conv.lfo_hz_mode[number - 1] else f"lfo_{number}_tempo"
 
+
+# Serum range / Vital range for destinations whose ranges differ (see
+# _modulations_from_serum1).  Measured: CoarsePit reads -64..+64 semitones.
+DEST_AMOUNT_SCALE = {
+    "A Semi": 24.0 / 96.0, "B Semi": 24.0 / 96.0,
+    "A CoarsePit": 128.0 / 96.0, "B CoarsePit": 128.0 / 96.0,
+}
 
 # Serum modulation destinations (by parameter name) -> Vital parameter ids.
 SERUM_DEST_TO_VITAL = {
@@ -1082,12 +1104,23 @@ SERUM2_UNSUPPORTED_SOURCES = {
     56: "Voice Mod 1", 57: "Voice Mod 2", 58: "Voice Index", 59: "NoteOn Rand (Discrete)",
 }
 
+# Serum 2 range / Vital range for destinations whose ranges differ: the pitch
+# controls are +-64 st (CoarsePit), +-12 st (Pitch) and +-4 oct (Octave) and
+# all land on Vital's +-48 st transpose.
+SERUM2_AMOUNT_SCALE = {
+    ("Oscillator", "kParamCoarsePit"): 128.0 / 96.0,
+    ("Oscillator", "kParamPitch"): 24.0 / 96.0,
+    ("Oscillator", "kParamOctave"): 1.0,
+}
+
 # Serum 2 destinations, addressed as (module type, module index, parameter).
 SERUM2_DEST = {
     ("Oscillator", "kParamVolume"): "osc_{n}_level",
     ("Oscillator", "kParamPan"): "osc_{n}_pan",
     ("Oscillator", "kParamFine"): "osc_{n}_tune",
     ("Oscillator", "kParamCoarsePit"): "osc_{n}_transpose",
+    ("Oscillator", "kParamPitch"): "osc_{n}_transpose",
+    ("Oscillator", "kParamOctave"): "osc_{n}_transpose",
     ("Oscillator", "kParamDetune"): "osc_{n}_unison_detune",
     ("WTOsc", "kParamTablePos"): "osc_{n}_wave_frame",
     ("WTOsc", "kParamWarp"): "osc_{n}_distortion_amount",
@@ -1480,6 +1513,7 @@ def _modulations_from_serum2(conv: Conversion, patch) -> None:
         amount = params.get("kParamAmount", 0.0) if isinstance(params, dict) else 0.0
         if abs(amount) < 1e-6:
             continue
+        amount *= SERUM2_AMOUNT_SCALE.get((module_type, param_name), 1.0)
         bipolar = isinstance(params, dict) and params.get("kParamBipolar", 0.0) > 0.5
         aux = SERUM2_SOURCES.get(aux_id) if aux_id else None
         if aux_id and aux is None:
@@ -1497,6 +1531,6 @@ def _modulations_from_serum2(conv: Conversion, patch) -> None:
         if vital_aux:
             index = conv.add_modulation(vital_source, destination, 0.0, bipolar)
             if index is not None:
-                conv.add_modulation(vital_aux, f"modulation_{index}_amount", amount / 100.0, False)
+                conv.add_modulation(vital_aux, f"modulation_{index}_amount", amount / 200.0, False)  # amount spans -1..1
         else:
             conv.add_modulation(vital_source, destination, amount / 100.0, bipolar)

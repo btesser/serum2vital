@@ -64,4 +64,5 @@ def test_aux_routing_uses_amount_modulation():
         {"source": "lfo_1", "destination": "osc_1_tune"},
         {"source": "mod_wheel", "destination": "modulation_1_amount"},
     ]
-    assert conv.settings["modulation_1_amount"] == 0.0 and abs(conv.settings["modulation_2_amount"] - 0.4) < 1e-9
+    # The aux link carries half the amount: Vital's amount parameter spans -1..1.
+    assert conv.settings["modulation_1_amount"] == 0.0 and abs(conv.settings["modulation_2_amount"] - 0.2) < 1e-9

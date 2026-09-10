@@ -44,3 +44,34 @@ def test_fm_sub_and_interp_helpers():
     assert mapping._interp(-18.1, [(-36.2, 0.2), (-18.1, 1.5), (-7.5, 7.3)]) == pytest.approx(1.5)
     assert mapping._interp(-50.0, [(-36.2, 0.2), (-18.1, 1.5), (-7.5, 7.3)]) == pytest.approx(0.2)
     assert mapping._interp(-12.8, [(-36.2, 0.2), (-18.1, 1.5), (-7.5, 7.3)]) == pytest.approx(4.4, abs=0.01)
+
+
+def test_pitch_modulation_ranges_are_rescaled():
+    # Serum Semi is +-12 st, CoarsePit +-64 st; Vital transpose is +-48 st.
+    assert mapping.DEST_AMOUNT_SCALE["A Semi"] == pytest.approx(0.25)
+    assert mapping.DEST_AMOUNT_SCALE["A CoarsePit"] == pytest.approx(128 / 96)
+    assert mapping.SERUM2_AMOUNT_SCALE[("Oscillator", "kParamPitch")] == pytest.approx(0.25)
+    conv = mapping.convert_serum2(serum2_patch({
+        "Oscillator0": {"plainParams": {"kParamVolume": 0.5}},
+        "ModSlot0": {"source": [6, 0], "destModuleTypeString": "Oscillator", "destModuleID": 0,
+                     "destModuleParamName": "kParamPitch", "plainParams": {"kParamAmount": 100.0}},
+    }))
+    assert conv.modulations[0]["destination"] == "osc_1_transpose"
+    assert conv.settings["modulation_1_amount"] == pytest.approx(0.25)
+
+
+def serum2_patch(state):
+    from serum2vital import serum2
+    return serum2.Serum2Patch(name="synthetic", author="", description="", tags=[], product_version="", state=state)
+
+
+def test_aux_link_amount_is_halved():
+    # Vital's modulation amount parameter spans -1..1, so meta-modulating it by
+    # x moves the amount by 2x; the aux link carries half the Serum amount.
+    from serum2vital.mapping import Conversion, route
+    conv = Conversion(name="aux")
+    route(conv, "lfo_1", "osc_1_transpose", 0.5, "mod_wheel")
+    assert conv.modulations[0] == {"source": "lfo_1", "destination": "osc_1_transpose"}
+    assert conv.settings["modulation_1_amount"] == 0.0
+    assert conv.modulations[1]["destination"] == "modulation_1_amount"
+    assert conv.settings["modulation_2_amount"] == pytest.approx(0.25)
