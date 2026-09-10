@@ -138,15 +138,20 @@ def main(argv=None) -> int:
     seconds = max(start + duration for _, _, start, duration in notes) + 0.8
 
     forced_sources: dict[Path, Path] = {}
-    if args.sources:
+    by_output: dict[Path, dict] = {}
+    if args.report.exists():
         report = json.loads(args.report.read_text(encoding="utf-8"))
-        root = str(args.sources.resolve()).lower().rstrip("\/") + os.sep
         for item in report["results"]:
-            if item.get("output") and str(Path(item["source"]).resolve()).lower().startswith(root):
-                forced_sources[Path(item["output"])] = Path(item["source"])
+            if item.get("output"):
+                by_output[Path(item["output"]).resolve()] = item
+    if args.sources:
+        root = str(args.sources.resolve()).lower().rstrip("\/") + os.sep
+        for output, item in by_output.items():
+            if str(Path(item["source"]).resolve()).lower().startswith(root):
+                forced_sources[output] = Path(item["source"])
         vitals = sorted(forced_sources, key=lambda p: p.stem.lower())
     else:
-        vitals = sorted(args.vital_folder.rglob("*.vital"))
+        vitals = sorted(p.resolve() for p in args.vital_folder.rglob("*.vital"))
     index = source_index(args.serum_root, args.out.parent / "_source_index.json")
     args.out.mkdir(parents=True, exist_ok=True)
 
@@ -180,8 +185,9 @@ def main(argv=None) -> int:
         if v in forced_sources:
             category = str(forced_sources[v].parent.relative_to(args.sources.resolve())).replace("\\", "/").strip(".")
         else:
-            category = str(v.relative_to(args.vital_folder).parent).replace("\\", "/")
-        rows.append({"name": stem, "category": category,
+            category = str(v.relative_to(args.vital_folder.resolve()).parent).replace("\\", "/")
+        report_item = by_output.get(v.resolve(), {})
+        rows.append({"name": stem, "category": category, "notes": list(report_item.get("notes", [])),
                      "vital": vital_wav.name if vital_ok else None, "serum": serum_wav.name if serum_wav else None,
                      "source": kind, "source_path": str(src[0]) if src else "", "ambiguous": len(src) > 1})
 

@@ -1,5 +1,14 @@
 # Changelog
 
+## Unreleased
+
+* Listening site: every preset now shows its conversion notes (with kind
+  badges) and its closeness metrics against the Serum render; pages filter by
+  note kind, note family and tier, and sort by distance. `tools/analyze_listen.py`
+  computes the metrics (level offset, 1/6-octave spectral distance, envelope
+  correlation), groups presets by note family and writes the analysis that
+  the site's `analysis/` page and `out/listen/analysis.md` present.
+
 ## 0.4.1 (2026-09-09)
 
 * Serum 1 reader: matrix records are identified by `80 <slot> FF` at +0x21;
