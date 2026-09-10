@@ -111,6 +111,17 @@ sample reproduces the documented factory default at every structural landmark �
 `A Pan`/`A Semi`/`A Fine` at 0.5, `Bend U`/`Bend D` at 0.5417/0.4583,
 `Mod 1..16 out` at 1.0, `LFO1-4 smooth` at 0.0.
 
+The gist's names are wrong for a few slots in the current build (checked
+against the plugin's own parameter list on 2026-09-10): 83 is the reverb's
+**Decay** (0.8 .. 12 s, linear), 85 **Spin Rate** and 87 **Spin Depth** (the
+gist says pre-delay, damp and width, which this reverb does not have); 193 is
+`Mod 7 out` (the gist repeats `Mod 8 out`); 270-272 are the multiband
+compressor's `CompMB L/M/H` band knobs (0 .. 200 %, 100 % neutral). Slots
+289-298 (`FX Dist Level` ... `FX Hyper Level`) are per-effect output trims,
+40·log10(2n) dB (0.5 = 0 dB); they are not converted (Vital's effects have no
+output trim) and are non-default in about 1 % of presets, 8 % for the FX
+filter. `serum2vital/serum_params.py` carries the corrected names.
+
 Two parameters are stored as stepped indices rather than a continuous value
 (the general rule for menu parameters is under "Indexed parameters" below):
 
@@ -411,7 +422,8 @@ fixtures that would settle the items marked *fixture*.
 | item | status | how to settle |
 |------|--------|---------------|
 | Global switches block fields +0x04, +0x30, +0x4C, +0x58, +0x60 | not read; none of them changes the rendered audio in any scenario (see the switches-block section), so they are taken to be GUI-only state | *fixture*: only worth it if a GUI control is found whose state is not covered elsewhere; +0x60 is probably a display zoom (its users edit envelope curves) |
-| Chorus switch at +0x48: its GUI label | read and mapped (Vital `chorus_spread` 0) from its measured effect (no L/R LFO offset) | a look at Serum's chorus panel |
+| Chorus switch at +0x48: its GUI label | read and reported (its measured effect, an in-phase L/R chorus LFO, has no Vital counterpart; Vital's `chorus_spread` is the chorus *filter* spread, which the earlier mapping had set to 0) | a look at Serum's chorus panel |
+| Per-effect output trims `FX * Level` (parameters 289-298) | read, not converted | nothing to settle; a Vital effect has no output trim |
 | LFO 5–8 switches in the classic layout | confirmed absent: the record at 0x33D0 holds only the four ANCH bytes, then zeros or heap junk, in every one of the 611 classic-layout presets that route LFO 5–8; those builds did not save the switches, so "synced, free-running" is the only possible reading | nothing to settle |
 | `Mast.Tun` parameter (index 80) range | measured at (v − 0.5) × 128 semitones on two points (±0.1 → ±12.8 st); never non-default in the 15k-preset library, so it is not converted statically | a third point with a wider pitch tracker if ever needed |
 | Second zlib stream in the chunk (16 KB, identical in every preset) and the uint32 before the length word | preserved verbatim by `tools/craft_fxp.py` | not needed |
@@ -426,9 +438,9 @@ fixtures that would settle the items marked *fixture*.
 | Modulation source ids 39–44 (47, 48 also seen) | reported as unknown (about one routing per ten library presets, in factory presets of every 2.0.x version, including Steve Duda's own, so they are current sources that the `12`/`12b` menu capture missed rather than legacy ids). 39 and 41 mostly drive pan, fine tune and cutoff with small amounts; 40 and 42 drive LFO point mod buses and table position | *fixture*: a matrix with every Source menu entry (including any submenus) in order |
 | Aux source ids | confirmed to share the source enum by the library: the aux column holds 1 (mod wheel, 232 uses), 16 (velocity), 18 (aftertouch) and 25–32 (macros) almost exclusively | nothing to settle |
 | Hosting Serum 2 headlessly | solved (2026-09-10): `tools/serum2_host.py` loads Serum2.vst3 through DawDreamer, injects a `.SerumPreset` and renders. The VST3 state is two `XferJson` containers (processor and edit controller), each a JSON header (`hash` = md5 of the zstd payload) over a CBOR map keyed by module; a `.SerumPreset` is the union of both maps. Serum silently keeps its previous state when a container carries keys the other side owns (the naive "paste the whole preset into `<IComponent>`" that looked like a broken `load_state`), so the host splits the preset by each container's own key set. pedalboard still cannot scan the plugin (`unsupported plugin format or scan failure`); FX parameters are still only exposed as "FX Main Param N" proxies, but the FX rack state is readable from the processor document | nothing to settle |
-| Synced delay time steps (`FXDelay.kParamTime` when beat-synced) | law anchored on two factory presets | *fixture*: delay stepped through 1/64 … 4 bars |
-| Synced RATE of chorus/flanger/phaser | assumed to snap evenly over 8 bars … 1/32 on the quartic Hz knob | *fixture*: chorus rate stepped through the synced divisions |
-| Reverb `kParamDelay` for the non-plate types (DECAY or PRE-DLY?) | dropped, reported | *fixture*: Hall reverb with a distinctive decay and pre-delay |
+| Synced delay time steps (`FXDelay.kParamTime` when beat-synced) | measured (2026-09-10, crafted presets rendered at 120 BPM): the stored seconds are quantised at render time, boundaries in `fx_common.DELAY_SYNC_BOUNDS`; offset 1.5 = dotted, 4/3 = triplet of the next longer division | nothing to settle |
+| Synced RATE of chorus/flanger/phaser | measured: the knob position steps through Serum 1's 31-entry ladder (`fx_common.FX_RATE_RUNS`), confirmed on the dotted-quarter and quarter-triplet renders | nothing to settle |
+| Reverb `kParamDelay` for the non-plate types | measured: a decay control for Hall and Abyss (Hall RT60 3 s at 30, 7 s at 60, runaway by 150), no effect on Vintage; per-type RT60 laws in `fx_common.serum2_reverb_rt60`. `kSpace` renders silence headlessly and is mapped like Hall | nothing to settle (Space would need a GUI render) |
 | Module defaults never seen non-default in the corpus (chorus delays, flanger width, delay time) | educated guesses in `S2_FX_DEFAULTS` | a fixture with each module enabled at its defaults tells nothing; they only matter when a preset leaves the knob untouched |
 | Modules without a Vital counterpart: `RoutingSlot` (FX buses), `MidiClip`, `Arp`, `ArpClip`, `ClipPlayer`, `VoicePanel`, `PitchQuantizer`, `LFOPointModBus`; the multisample, granular and spectral oscillator engines | dropped, reported | out of scope for a Vital target |
 

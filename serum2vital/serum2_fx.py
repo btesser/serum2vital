@@ -209,11 +209,12 @@ def _distortion(conv, m: _Module, state: _RackState) -> None:
     if not state.claim("distortion", m):
         return
     mode = m.text("kParamMode") or "kTube"
-    vital_type, exact = fx.dist_mode_index(mode)
+    # Same drive law as Serum 1 (the Serum 2 tube fixtures match within 0.4 dB).
+    vital_type, drive_db, exact = fx.dist_settings(mode, clamp01(m.get("kParamDrive") / 100.0))
     conv.set("distortion_on", 1.0)
     conv.set("distortion_type", vital_type)
-    conv.set("distortion_drive", 30.0 * clamp01(m.get("kParamDrive") / 100.0))
-    conv.set("distortion_mix", clamp01(m.get("kParamWet") / 100.0))
+    conv.set("distortion_drive", drive_db)
+    conv.set("distortion_mix", fx.serum_wet_gain(clamp01(m.get("kParamWet") / 100.0)))
     key = fx.normalise_dist_name(mode)
     if key in fx.DIST_MODES_WITHOUT_COUNTERPART:
         conv.note(f"unsupported: distortion mode {mode} has no Vital waveshaper; substituted soft clip")
@@ -238,12 +239,13 @@ def _distortion(conv, m: _Module, state: _RackState) -> None:
 def _mod_rate(conv, prefix: str, m: _Module, freq_lo: float, freq_hi: float) -> None:
     rate = m.get("kParamRate")
     if m.get("kParamBeatSync") > 0.5:
-        index = fx.rate_hz_to_tempo_index(rate)
-        conv.set(f"{prefix}_sync", SYNC_TEMPO)
-        conv.set(f"{prefix}_tempo", float(index))
+        # The stored Hz is the knob position (20 n^4); synced, Serum steps that
+        # position through the same 31-entry ladder as Serum 1 (checked by rendering).
+        sync, index = fx.fx_rate_sync(fx.fx_rate_step_from_hz(rate))
+        conv.set(f"{prefix}_sync", float(sync))
+        conv.set(f"{prefix}_tempo", float(max(0, min(10, index))))
         if index > 10:
             conv.note(f"approximation: {prefix} synced rate 1/32 clamped to Vital's 1/16")
-        conv.note(f"approximation: {prefix} synced division inferred from the rate knob position")
     else:
         conv.set(f"{prefix}_sync", SYNC_FREE)
         conv.set(f"{prefix}_frequency", max(freq_lo, min(freq_hi, log2_hz(rate))))
@@ -255,12 +257,12 @@ def _flanger(conv, m: _Module, state: _RackState) -> None:
     if not state.claim("flanger", m):
         return
     conv.set("flanger_on", 1.0)
-    conv.set("flanger_dry_wet", 0.5 * clamp01(m.get("kParamWet") / 100.0))
+    conv.set("flanger_dry_wet", 0.5 * fx.serum_wet_gain(clamp01(m.get("kParamWet") / 100.0)))
     conv.set("flanger_mod_depth", clamp01(m.get("kParamDepth") / 100.0))
     conv.set("flanger_feedback", clamp01(m.get("kParamFeedback") / 100.0))
-    conv.set("flanger_phase_offset", clamp01(m.get("kParamWidth") / 360.0))
+    conv.set("flanger_phase_offset", clamp01(fx.FLANGER_OFFSET_PER_180 * m.get("kParamWidth") / 180.0))
+    conv.set("flanger_center", fx.FLANGER_CENTER_NOTE)   # Serum's flanger sits at ~16 ms (measured on Serum 1)
     _mod_rate(conv, "flanger", m, -5.0, 2.0)
-    conv.note("approximation: flanger centre frequency left at Vital's default (Serum has no such control)")
     _level_out_note(conv, m)
 
 
@@ -268,11 +270,11 @@ def _phaser(conv, m: _Module, state: _RackState) -> None:
     if not state.claim("phaser", m):
         return
     conv.set("phaser_on", 1.0)
-    conv.set("phaser_dry_wet", clamp01(m.get("kParamWet") / 100.0))
+    conv.set("phaser_dry_wet", fx.serum_wet_gain(clamp01(m.get("kParamWet") / 100.0)))
     conv.set("phaser_feedback", clamp01(m.get("kParamFeedback") / 100.0))
     conv.set("phaser_center", hz_to_note(m.get("kParamFreq")))
     conv.set("phaser_mod_depth", 48.0 * clamp01(m.get("kParamDepth") / 100.0))
-    conv.set("phaser_phase_offset", clamp01(m.get("kParamWidth") / 360.0))
+    conv.set("phaser_phase_offset", clamp01(fx.PHASER_OFFSET_PER_180 * m.get("kParamWidth") / 180.0))
     _mod_rate(conv, "phaser", m, -5.0, 2.0)
     if m.has("kParamNumPoles"):
         conv.note("unsupported: phaser POLES count dropped (Vital's phaser has a fixed stage count)")
@@ -286,7 +288,7 @@ def _chorus(conv, m: _Module, state: _RackState) -> None:
         return
     conv.set("chorus_on", 1.0)
     conv.set("chorus_voices", 2.0)  # Serum: two stereo pairs
-    conv.set("chorus_dry_wet", clamp01(m.get("kParamWet") / 100.0))
+    conv.set("chorus_dry_wet", fx.serum_wet_to_vital(clamp01(m.get("kParamWet") / 100.0)))
     for key, vital in (("kParamDelay", "chorus_delay_1"), ("kParamDelay2", "chorus_delay_2")):
         ms = max(m.get(key), 1.0)
         conv.set(vital, math.log2(ms / 1000.0))
@@ -294,10 +296,15 @@ def _chorus(conv, m: _Module, state: _RackState) -> None:
             conv.note(f"approximation: chorus {key[6:]} below 1 ms raised to Vital's 1 ms minimum")
     conv.set("chorus_mod_depth", clamp01(m.get("kParamDepth") / CHORUS_DEPTH_MAX_MS))
     conv.set("chorus_feedback", max(-0.95, min(0.95, m.get("kParamFeedback") / 100.0)))
-    conv.set("chorus_cutoff", hz_to_note(m.get("kParamFilt")))
+    # Serum's chorus FILTER is a low-pass on the wet path (Vital: cutoff +/- spread, see fx_common.chorus_lowpass).
+    cutoff, spread = fx.chorus_lowpass(m.get("kParamFilt"))
+    conv.set("chorus_cutoff", cutoff)
+    conv.set("chorus_spread", spread)
     if m.get("kParamFiltMode") > 0.5:
-        conv.set("chorus_cutoff", 136.0)
-        conv.note("unsupported: chorus HPF mode dropped (Vital's chorus filter is low-pass only)")
+        # HPF mode: put Vital's high-pass at the knob frequency and open the low-pass.
+        lp, hp = hz_to_note(20000.0), hz_to_note(max(20.0, m.get("kParamFilt")))
+        conv.set("chorus_cutoff", (lp + hp) / 2.0)
+        conv.set("chorus_spread", clamp01((lp - hp) / 2.0 / 96.0))
     _mod_rate(conv, "chorus", m, -6.0, 3.0)
     _level_out_note(conv, m)
 
@@ -306,7 +313,6 @@ def _delay(conv, m: _Module, state: _RackState) -> None:
     if not state.claim("delay", m):
         return
     conv.set("delay_on", 1.0)
-    conv.set("delay_dry_wet", clamp01(m.get("kParamWet") / 100.0))
     conv.set("delay_feedback", max(-1.0, min(1.0, m.get("kParamFeedback") / 100.0)))
     conv.set("delay_filter_cutoff", hz_to_note(m.get("kParamFreq")))
     conv.set("delay_filter_spread", clamp01((m.get("kParamBW") - 0.75) / 7.5))
@@ -320,28 +326,31 @@ def _delay(conv, m: _Module, state: _RackState) -> None:
         time_r, off_r = time_l, off_l
     same = abs(time_l * off_l - time_r * off_r) <= 0.02 * max(time_l * off_l, 1e-6)
 
+    wet_scale = 1.0
     if mode == DELAY_PING_PONG:
         conv.set("delay_style", STYLE_PING_PONG)
+        wet_scale = 0.707   # Vital's ping-pong echoes sit 3 dB above its plain delay; Serum's do not
     elif mode == DELAY_TAP:
         conv.set("delay_style", STYLE_MONO)
         time_l, off_l = time_r, off_r
         conv.note("approximation: Tap->Delay mode mapped onto a mono delay using the right-channel time")
     else:
         conv.set("delay_style", STYLE_MONO if same else STYLE_STEREO)
+    conv.set("delay_dry_wet", fx.serum_wet_to_vital(clamp01(m.get("kParamWet") / 100.0), wet_scale))
 
     synced = m.get("kParamBeatSync") > 0.5
     for prefix, seconds, offset in (("delay", time_l, off_l), ("delay_aux", time_r, off_r)):
         if synced:
-            sync = fx.offset_to_sync(offset)
+            # The stored seconds are the knob position; Serum quantises it to a
+            # division at render time (ladder measured with crafted fixtures).
+            # The offset scalar multiplies that division: 1.5 dotted, 4/3 = the
+            # triplet of the next longer division, anything else the nearest.
+            sync, tempo = fx.synced_delay(fx.delay_seconds_to_tempo_index(seconds), offset)
             conv.set(f"{prefix}_sync", float(sync))
-            conv.set(f"{prefix}_tempo", float(fx.delay_seconds_to_tempo_index(seconds)))
-            if sync == SYNC_TEMPO and abs(offset - 1.0) > 0.02:
-                conv.note(f"approximation: delay time scalar {offset:.3f} is neither dotted nor triplet; ignored")
+            conv.set(f"{prefix}_tempo", float(tempo))
         else:
             conv.set(f"{prefix}_sync", SYNC_FREE)
             conv.set(f"{prefix}_frequency", max(-2.0, min(9.0, math.log2(1.0 / max(seconds * offset, 1e-4)))))
-    if synced:
-        conv.note("approximation: synced delay division inferred from the stored time-knob value")
     if m.has("kParamHQ"):
         conv.note("unsupported: delay High Quality switch dropped")
     _level_out_note(conv, m)
@@ -352,9 +361,8 @@ def _compressor(conv, m: _Module, state: _RackState) -> None:
         return
     conv.set("compressor_on", 1.0)
     conv.set("compressor_mix", clamp01(m.get("kParamWet") / 100.0))
-    conv.set("compressor_attack", fx.comp_time_to_vital(m.get("kParamAttack")))
-    conv.set("compressor_release", fx.comp_time_to_vital(m.get("kParamRelease")))
-    conv.note("approximation: compressor attack/release mapped by knob position (Vital's times are not in ms)")
+    conv.set("compressor_attack", fx.comp_time_to_vital(m.get("kParamAttack"), "attack"))
+    conv.set("compressor_release", fx.comp_time_to_vital(m.get("kParamRelease"), "release"))
 
     thresh_db = fx.comp_threshold_db(m.get("kParamThresh"))
     ratio = fx.serum_ratio_to_vital(m.get("kParamRatio"))
@@ -367,26 +375,30 @@ def _compressor(conv, m: _Module, state: _RackState) -> None:
     conv.set("compressor_enabled_bands", 0.0 if multiband else 3.0)
     bands = (("low", "0"), ("band", "1"), ("high", "2"))
     for band, suffix in bands:
+        band_ratio = clamp01(m.get(f"kParamRatio{suffix}", ratio)) if m.has(f"kParamRatio{suffix}") else ratio
+        band_below = clamp01(m.get(f"kParamRatioBelow{suffix}")) if m.has(f"kParamRatioBelow{suffix}") else below
         if multiband:
-            scale = m.get(f"kParamThreshUD{suffix}") / 100.0
-            band_ratio = clamp01(m.get(f"kParamRatio{suffix}", ratio)) if m.has(f"kParamRatio{suffix}") else ratio
-            band_below = clamp01(m.get(f"kParamRatioBelow{suffix}")) if m.has(f"kParamRatioBelow{suffix}") else below
-            gain = makeup_db + m.get(f"kParamGain{suffix}")
+            # OTT-style: Vital's upward + downward compressor with the measured offsets;
+            # the band L/M/H knobs (kParamThreshUD, 0..200 %) act as band level.
+            values = fx.mb_band_settings(thresh_db, band_ratio, band)
+            upper, lower = values["upper_threshold"], values["lower_threshold"]
+            lower_ratio = max(values["lower_ratio"], band_below)
+            gain = makeup_db + m.get(f"kParamGain{suffix}") + values["gain"] + fx.mb_band_gain_db(m.get(f"kParamThreshUD{suffix}"))
         else:
-            scale, band_ratio, band_below, gain = 1.0, ratio, below, makeup_db
-        threshold = max(-80.0, min(0.0, thresh_db * scale))
-        conv.set(f"compressor_{band}_upper_threshold", threshold)
-        conv.set(f"compressor_{band}_lower_threshold", max(-80.0, threshold - 10.0))
+            upper = max(-80.0, min(0.0, thresh_db + fx.COMP_THRESHOLD_OFFSET_DB))
+            lower = max(-80.0, upper - 10.0) if band_below > 0.0 else -80.0
+            lower_ratio = band_below
+            gain = makeup_db
+        conv.set(f"compressor_{band}_upper_threshold", upper)
+        conv.set(f"compressor_{band}_lower_threshold", lower)
         conv.set(f"compressor_{band}_upper_ratio", band_ratio)
-        conv.set(f"compressor_{band}_lower_ratio", band_below)
+        conv.set(f"compressor_{band}_lower_ratio", lower_ratio)
         conv.set(f"compressor_{band}_gain", max(-30.0, min(30.0, gain)))
     if multiband:
-        conv.note("approximation: multiband thresholds scaled per band from Serum's THRESH x band offsets")
         if m.has("kParamXoverLow") or m.has("kParamXoverHi"):
             conv.note("unsupported: compressor crossover frequencies dropped (Vital's bands are fixed)")
-    if below > 0.0 or any(m.has(f"kParamRatioBelow{s}") for _, s in bands):
-        conv.note("approximation: Serum's BELOW ratio mapped onto Vital's lower (upward) ratio")
-    conv.note("approximation: Vital's lower threshold set 10 dB under the upper threshold (Serum has one threshold)")
+    elif below > 0.0 or any(m.has(f"kParamRatioBelow{s}") for _, s in bands):
+        conv.note("approximation: Serum's BELOW ratio mapped onto Vital's lower (upward) ratio, 10 dB under the threshold")
     if m.has("kParamDeadband0"):
         conv.note("unsupported: compressor deadband settings dropped")
     _level_out_note(conv, m)
@@ -398,27 +410,30 @@ def _reverb(conv, m: _Module, state: _RackState) -> None:
     kind = m.text("kParamType") or "kPlate"
     size = clamp01(m.get("kParamSize") / 100.0)
     conv.set("reverb_on", 1.0)
-    conv.set("reverb_dry_wet", clamp01(m.get("kParamWet") / 100.0))
+    wet_scale = fx.S2_PLATE_WET_SCALE if kind == "kPlate" else fx.REVERB_WET_SCALE   # the plate runs ~6 dB hot
+    conv.set("reverb_dry_wet", fx.serum_wet_to_vital(clamp01(m.get("kParamWet") / 100.0), wet_scale))
     conv.set("reverb_size", size)
-    # Serum's SIZE is "reverb time + dimension"; spread it over 0.3 s .. 13 s.
-    conv.set("reverb_decay_time", -1.74 + 5.5 * size)
+    # RT60 per type from crafted-fixture renders: plate and vintage follow SIZE
+    # alone, hall/space a floor by SIZE overtaken by kParamDelay (its DECAY knob),
+    # abyss both; Vital's decay_time is set to measure the same RT60.
+    rt60 = fx.serum2_reverb_rt60(kind, m.get("kParamSize"), m.get("kParamDelay"))
+    conv.set("reverb_decay_time", fx.vital_decay_for_rt60(rt60, size))
     conv.set("reverb_delay", max(0.0, min(0.3, m.get("kParamPreDelay"))))
     if m.get("kParamPreDelay") > 0.3:
         conv.note("approximation: reverb pre-delay clamped to Vital's 300 ms maximum")
     if m.get("kParamPreDelayBeatSync") > 0.5:
         conv.note("unsupported: reverb pre-delay tempo sync dropped")
-    conv.set("reverb_pre_low_cutoff", 128.0 * clamp01(m.get("kParamFreq") / 100.0))
-    high_cut = 128.0 * (1.0 - clamp01(m.get("kParamFreqB") / 100.0))
-    conv.set("reverb_high_shelf_cutoff", high_cut)
-    conv.set("reverb_pre_high_cutoff", high_cut)
-    conv.set("reverb_high_shelf_gain", -6.0 * clamp01(m.get("kParamFreqC") / 100.0))
-    conv.note("approximation: reverb decay time derived from SIZE; LO/HI CUT percentages mapped linearly onto Vital's cutoffs")
-    if kind != "kPlate":
+    # LO CUT 50 % measures like Serum 1's 40 %, HI CUT 60 % like Serum 1's 45 %.
+    pre_high, pre_low = fx.reverb_tone(0.75 * clamp01(m.get("kParamFreqB") / 100.0), 0.8 * clamp01(m.get("kParamFreq") / 100.0))
+    conv.set("reverb_pre_high_cutoff", pre_high)
+    conv.set("reverb_pre_low_cutoff", pre_low)
+    conv.set("reverb_high_shelf_gain", 0.0)
+    if kind not in ("kPlate", "kHall"):
         conv.note(f"approximation: Serum reverb type {kind[1:]} rendered with Vital's single reverb algorithm")
+    if kind == "kSpace":
+        conv.note("approximation: Space reverb could not be measured; Hall decay law used")
     if m.has("kParamWidth") and m.get("kParamWidth") < 99.0:
         conv.note("unsupported: reverb WIDTH dropped (Vital's reverb has no width control)")
-    if m.has("kParamDelay"):
-        conv.note(f"unsupported: {kind[1:]} reverb DECAY/PRE-DLY control (kParamDelay) dropped")
     if m.has("kParamFeedback") and m.get("kParamFeedback") > 0.0:
         conv.note(f"unsupported: {kind[1:]} reverb FEEDBACK dropped")
     for key in ("kParamMode", "kParamVintageScale", "kParamVintageScaleB"):
@@ -431,19 +446,20 @@ def _eq_band(conv, state: _RackState, m: _Module, side: str) -> None:
     n = "1" if side == "low" else "2"
     kind = int(round(m.get(f"kParamType{n}")))
     hz, gain = m.get(f"kParamFreq{n}"), m.get(f"kParamGain{n}")
-    reso = clamp01(m.get(f"kParamReso{n}") / 100.0)
+    # Q knob 0..100 %: Serum 1's law (peak / pass tables, shelves flat and shifted) is assumed to carry over.
+    q = clamp01(m.get(f"kParamReso{n}") / 100.0)
     label = f"EQ {side} band ({kind})"
     if kind == EQ_PEAK:
         if state.claim_band("band", label):
             conv.set("eq_band_mode", 0.0)
             conv.set("eq_band_cutoff", hz_to_note(hz))
             conv.set("eq_band_gain", max(-15.0, min(15.0, gain)))
-            conv.set("eq_band_resonance", reso)
+            conv.set("eq_band_resonance", fx.eq_resonance(q, "peak"))
         elif state.claim_band(side, label):
             conv.set(f"eq_{side}_mode", 0.0)
-            conv.set(f"eq_{side}_cutoff", hz_to_note(hz))
+            conv.set(f"eq_{side}_cutoff", hz_to_note(hz) + fx.EQ_SHELF_SHIFT_SEMITONES)
             conv.set(f"eq_{side}_gain", max(-15.0, min(15.0, gain)))
-            conv.set(f"eq_{side}_resonance", reso)
+            conv.set(f"eq_{side}_resonance", 0.0)
             conv.note(f"approximation: EQ {side} peak band rendered as a shelf (Vital's peak band was taken)")
         else:
             return
@@ -451,9 +467,9 @@ def _eq_band(conv, state: _RackState, m: _Module, side: str) -> None:
         if not state.claim_band(side, label):
             return
         conv.set(f"eq_{side}_mode", 1.0 if kind == EQ_PASS else 0.0)
-        conv.set(f"eq_{side}_cutoff", hz_to_note(hz))
+        conv.set(f"eq_{side}_cutoff", hz_to_note(hz) if kind == EQ_PASS else hz_to_note(hz) + fx.EQ_SHELF_SHIFT_SEMITONES)
         conv.set(f"eq_{side}_gain", 0.0 if kind == EQ_PASS else max(-15.0, min(15.0, gain)))
-        conv.set(f"eq_{side}_resonance", reso)
+        conv.set(f"eq_{side}_resonance", fx.eq_resonance(q, "pass" if kind == EQ_PASS else "shelf"))
     if abs(gain) > 15.0 and kind != EQ_PASS:
         conv.note(f"approximation: EQ gain {gain:+.1f} dB clamped to Vital's +/-15 dB")
 

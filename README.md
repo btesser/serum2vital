@@ -219,6 +219,10 @@ instead of argued about:
   `tools/publish_listen.py out/listen/reese --site site` turns those folders
   into the MP3 + HTML site served from the `gh-pages` branch.
 * `tools/calibrate.py` runs the parameter sweeps the unit curves were fitted from.
+* `tools/fx_fixtures.py craft|serum|vital|compare` builds single-purpose effect
+  presets for both Serum generations, renders them through Serum and through the
+  converter into Vital, and compares echo times, tail decay, octave bands and
+  stereo width; the effect laws in `serum2vital/fx_common.py` come from it.
 * `tools/verify.py out/` checks the structural invariants Vital's loader needs.
 
 Install them with `pip install .[hosts]` and set `SERUM_VST2`, `VITAL_VST3` and

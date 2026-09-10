@@ -90,7 +90,8 @@ def test_hyper_to_chorus_and_flanger_fallback():
     assert target == "chorus"
     assert conv.settings["chorus_voices"] == 3.0
     assert conv.settings["chorus_on"] == 1.0
-    assert abs(conv.settings["chorus_dry_wet"] - 0.7) < 1e-9
+    # wet 0.5 and Dimension mix 0.2 through the measured scales (fx_common.HYPER_WET_SCALE / DIMENSION_WET_SCALE)
+    assert abs(conv.settings["chorus_dry_wet"] - (0.55 * 0.5 + 0.42 * 0.2)) < 1e-9
     assert any(n.startswith("unsupported: Hyper retrig") for n in conv.notes)
     assert any(n.startswith("approximation:") for n in conv.notes)
 

@@ -190,15 +190,26 @@ reported as `unsupported: FX bus N with ...`.
 
 ## Open items
 
-* The synced delay-time law is anchored on two factory presets only; Serum 2
-  exposes FX parameters to hosts as opaque "FX Main Param N" proxies, so it
-  could not be measured with DawDreamer.  A fixture saved from Serum 2 with
-  the delay stepped through 1/64 .. 4 bars would pin it down.
-* Same for the synced RATE knob of chorus/flanger/phaser (assumed to snap
-  evenly over 8 bars .. 1/32 on the quartic Hz knob).
-* Reverb `kParamDelay` is either DECAY or PRE-DLY for the non-plate types;
-  it is dropped until a fixture disambiguates it.
+Settled on 2026-09-10 with crafted presets rendered through `tools/serum2_host.py`
+(see `FIXTURE_PRESETS_TASK.md`, Batch C, and `FINDINGS_AND_PLAN.md`, third pass):
+
+* The synced delay-time law is a boundary table on the stored seconds
+  (`fx_common.DELAY_SYNC_BOUNDS`), not a geometric ladder; the offset scalar
+  4/3 is the triplet of the next longer division.
+* The synced RATE knob of chorus/flanger/phaser steps through Serum 1's
+  31-entry ladder by knob position (`fx_common.FX_RATE_RUNS`).
+* Reverb `kParamDelay` is a decay control for Hall (and Abyss) and does
+  nothing for Vintage; each type has its own RT60 law
+  (`fx_common.serum2_reverb_rt60`). The `kSpace` type renders silence in the
+  headless host and is mapped like Hall.
+* The Serum 2 conversion path rendered 3 dB louder than Serum 2 itself on the
+  Init preset (Serum 2 sits 1.4 dB below Serum 1 at identical settings, and
+  the Serum 1 path's 1.6 dB synth offset was missing); corrected.
+
+Still open:
+
 * Module defaults that are not visible in the corpus (chorus delays, flanger
   width, delay time) are educated guesses in `S2_FX_DEFAULTS`
-  (`serum2_fx.py`); they only
-  matter when a preset leaves that knob untouched.
+  (`serum2_fx.py`); they only matter when a preset leaves that knob untouched.
+* The EQ Q knob (`kParamReso`, default 43.33) is assumed to follow Serum 1's
+  Q law; it has not been measured on Serum 2.

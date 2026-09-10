@@ -138,14 +138,17 @@ DELAY_SYNC_RATIO = 0.08316586760018929 / DELAY_SYNC_ANCHOR_SECONDS  # 1/4 over 1
 DELAY_SYNC_ANCHOR_INDEX = VITAL_TEMPO_INDEX["1/8"]
 
 
-def delay_seconds_to_tempo_index(seconds: float, lo: int = 4, hi: int = 12) -> int:
-    steps = math.log(max(seconds, 1e-4) / DELAY_SYNC_ANCHOR_SECONDS) / math.log(DELAY_SYNC_RATIO)
-    return max(lo, min(hi, DELAY_SYNC_ANCHOR_INDEX - int(round(steps))))
+# delay_seconds_to_tempo_index: see the measured DELAY_SYNC_BOUNDS table below.
 
 
 # --------------------------------------------------------------------------
 # Hyper / Dimension
 # --------------------------------------------------------------------------
+
+
+# Vital chorus wet per unit of Serum Hyper WET / Dimension MIX (side-level match, fixtures).
+HYPER_WET_SCALE = 0.55
+DIMENSION_WET_SCALE = 0.42
 
 
 def hyper_rate_to_hz(knob_percent: float) -> float:
@@ -191,16 +194,21 @@ def hyper_to_chorus(
         conv.set("chorus_voices", 1.0)
         conv.set("chorus_mod_depth", 0.05)
         conv.set("chorus_frequency", math.log2(0.3))
-        conv.set("chorus_dry_wet", min(1.0, dim_mix))
+        # Serum's Dimension leaves the mid signal untouched and adds side only
+        # (-10 dB side at MIX 50 %, -4 dB at 100 %); Vital's chorus needs ~0.4x.
+        conv.set("chorus_dry_wet", min(1.0, DIMENSION_WET_SCALE * dim_mix))
         conv.note("approximation: Dimension expander mapped onto a one-pair chorus with 0.3 Hz / 5 % wobble")
     else:
-        conv.set("chorus_voices", float(max(1, min(4, math.ceil(voices / 2)))))
+        conv.set("chorus_voices", float(max(1, min(3, math.ceil(voices / 2)))))
         conv.set("chorus_frequency", log2_hz(rate_hz))
         conv.set("chorus_mod_depth", clamp01(detune))
-        conv.set("chorus_dry_wet", min(1.0, wet + dim_mix))
+        # Hyper adds its voices on top of the dry signal, so Serum's WET is not
+        # a crossfade: at 100 % the mix is +2.5 dB and the side level -4.5 dB,
+        # which Vital's equal-power chorus reaches at about wet 0.5 (fixtures).
+        conv.set("chorus_dry_wet", min(1.0, HYPER_WET_SCALE * wet + DIMENSION_WET_SCALE * dim_mix))
         conv.note(
             f"approximation: Hyper ({voices} voices, {rate_hz:.2f} Hz) mapped onto Vital's chorus "
-            f"with {max(1, min(4, math.ceil(voices / 2)))} voice pairs"
+            f"with {max(1, min(3, math.ceil(voices / 2)))} voice pairs"
         )
     conv.set("chorus_delay_1", math.log2(0.001 + 0.019 * clamp01(dim_size)))
     conv.set("chorus_delay_2", math.log2(0.002 + 0.019 * clamp01(dim_size)))
@@ -273,6 +281,13 @@ _COMP_THRESHOLD_TABLE = [
 ]
 
 
+# Vital's follower reads a saw near its peak (-9.5 dBFS for a -17.4 dBFS RMS
+# saw) while Serum's detector reads about -21.5 dBFS on the same signal, so a
+# Serum threshold has to sit 12 dB higher in Vital (fixtures: 3.4 / 15.1 dB of
+# reduction at -25.8 / -41.9 dB in Serum, reproduced within 0.2 dB).
+COMP_THRESHOLD_OFFSET_DB = 12.0
+
+
 def comp_threshold_db(knob: float) -> float:
     knob = clamp01(knob)
     for (x0, y0), (x1, y1) in zip(_COMP_THRESHOLD_TABLE, _COMP_THRESHOLD_TABLE[1:]):
@@ -293,9 +308,87 @@ def serum_ratio_to_vital(ratio: float) -> float:
     return clamp01(1.0 - 1.0 / max(ratio, 1.0))
 
 
-def comp_time_to_vital(ms: float) -> float:
-    """Serum attack/release in ms (0.1..1000, knob law 1000 * n**2) -> Vital 0..1."""
-    return clamp01(math.sqrt(max(ms, 0.0) / 1000.0))
+def comp_time_to_vital(ms: float, kind: str = "release") -> float:
+    """Serum attack/release in ms -> Vital's 0..1 knob.
+
+    Vital's compressor (compressor.cpp) turns the knob x into a follower time of
+    base_ms * exp(8x - 4); in single-band mode the band section runs, whose
+    bases are 1.4 ms (attack) and 28 ms (release).  Serum's default 90 ms
+    release therefore sits at x = 0.65, not at the knob position 0.3 that was
+    passed through before (which gave Vital 5.6 ms).
+    """
+    base = 1.4 if kind == "attack" else 28.0
+    return clamp01((math.log(max(ms, 0.05) / base) + 4.0) / 8.0)
+
+
+def comp_makeup_db(knob: float) -> float:
+    """Serum's compressor GAIN knob (0..1) in dB: 20 log10(1 + 31 n^2), read from the plugin
+    (0.1 -> 2.3, 0.25 -> 9.4, 0.5 -> 18.8, 1.0 -> 30.1 dB)."""
+    return 20.0 * math.log10(1.0 + 31.0 * clamp01(knob) ** 2)
+
+
+# --------------------------------------------------------------------------
+# wet/dry mix laws (measured with tools/fx_fixtures.py)
+# --------------------------------------------------------------------------
+
+# Serum's effect MIX knob w applies sin^2(pi w / 2) to the wet path and about
+# (1 - w^2) to the dry path (delay, distortion and reverb fixtures agree);
+# Vital's delay, chorus and reverb crossfade equal-power, sin(pi w'/2) wet and
+# cos(pi w'/2) dry, while its distortion, phaser and flanger mix linearly.
+
+# Serum 1's reverb level over the wet knob matches the plain law (sustained
+# note: -0.8 / -2.7 / -6 dB at 33 / 50 / 75 %); Serum 2's plate runs ~6 dB hot.
+REVERB_WET_SCALE = 1.0
+S2_PLATE_WET_SCALE = 2.0
+
+
+def serum_wet_gain(wet: float) -> float:
+    """Wet-path gain of Serum's MIX knob (0..1)."""
+    return math.sin(0.5 * math.pi * clamp01(wet)) ** 2
+
+
+def serum_wet_to_vital(wet: float, scale: float = 1.0) -> float:
+    """Vital equal-power wet position whose wet gain equals Serum's (times `scale`).
+
+    The dry path then lands within about 1.5 dB of Serum's: at w = 0.5 Serum
+    keeps the dry at -2.4 dB, Vital's w' = 1/3 keeps it at -1.2 dB.
+    """
+    gain = clamp01(scale * serum_wet_gain(wet))
+    return 2.0 / math.pi * math.asin(gain)
+
+
+def synced_delay(tempo_index: int, multiplier: float, lo: int = 4, hi: int = 12) -> tuple[int, int]:
+    """Vital (sync mode, tempo index) closest to `multiplier` x a synced division.
+
+    Serum's delay OFFSET knob scales the division by 0.5 .. 1.5 (Serum 1 shows
+    "Dot 1/2" at 0.75, "Dot" at 1.5; Serum 2 stores 1.5 for dotted and 4/3 for
+    triplet, i.e. the triplet of the next longer division).  Vital only has
+    plain, dotted (1.5x) and triplet (2/3x) of each division, so the nearest
+    (division, mode) pair in log time is chosen; a plain division wins ties.
+    """
+    best: tuple[float, int, int] | None = None
+    for index in range(lo, hi + 1):
+        for sync, m in ((SYNC_TEMPO, 1.0), (SYNC_DOTTED, 1.5), (SYNC_TRIPLET, 2.0 / 3.0)):
+            relative = 2.0 ** (tempo_index - index) * m
+            err = abs(math.log(relative / max(multiplier, 1e-3)))
+            if best is None or err < best[0] - 1e-9:
+                best = (err, sync, index)
+    return best[1], best[2]
+
+
+def chorus_lowpass(hz: float) -> tuple[float, float]:
+    """(chorus_cutoff, chorus_spread) that put Vital's chorus delay filter at a low-pass of `hz`.
+
+    Vital filters the chorus wet path with a one-pole low-pass at cutoff + spread*96
+    semitones and a high-pass at cutoff - spread*96 (delay.cpp getFilterRadius), so
+    a plain low-pass needs the pair centred between 20 Hz and `hz`.  Serum's chorus
+    FILTER knob (default 1 kHz) is exactly such a low-pass; leaving Vital's spread
+    at 1.0 (as before) disabled the filter entirely and made every converted chorus
+    far brighter than Serum's.
+    """
+    lp = hz_to_note(max(30.0, min(20000.0, hz)))
+    hp = hz_to_note(20.0)
+    return (lp + hp) / 2.0, clamp01((lp - hp) / 2.0 / 96.0)
 
 
 # --------------------------------------------------------------------------
@@ -392,3 +485,309 @@ def filter_type_to_vital(name: str) -> FilterMapping:
     # Reverb1, Diffuser, Allpasses, Combs, RM, RMT, SNH1, DJMixer, BandReject,
     # PZ_SVF, Wsp, Exp, ExpBPF, ZDF_A ...: no Vital counterpart.
     return FilterMapping(FILTER_ANALOG, STYLE_12DB, BLEND_LP, exact=False, supported=False, label=name)
+
+
+# --------------------------------------------------------------------------
+# measured effect laws (tools/fx_fixtures.py, 2026-09-10) -- see docs/FINDINGS_AND_PLAN.md
+# --------------------------------------------------------------------------
+
+
+def _interp(x: float, points: list[tuple[float, float]]) -> float:
+    """Piecewise-linear interpolation with clamped ends."""
+    if x <= points[0][0]:
+        return points[0][1]
+    for (x0, y0), (x1, y1) in zip(points, points[1:]):
+        if x <= x1:
+            return y0 + (x - x0) / (x1 - x0) * (y1 - y0)
+    return points[-1][1]
+
+
+def _interp_inverse(y: float, points: list[tuple[float, float]]) -> float:
+    """x for a monotonically increasing table, clamped to its ends."""
+    if y <= points[0][1]:
+        return points[0][0]
+    for (x0, y0), (x1, y1) in zip(points, points[1:]):
+        if y <= y1:
+            return x0 + (y - y0) / (y1 - y0) * (x1 - x0) if y1 > y0 else x1
+    return points[-1][0]
+
+
+# ---- synced modulation-effect rate (chorus / flanger / phaser) ------------
+# Serum 1's RATE knob in BPM mode steps through 31 entries over its 229
+# steps (plugin read-out): Off, then plain / dotted / triplet divisions from
+# 16 bars down to 1/32.  Serum 2 keeps the knob as Hz (20 n^4) and quantises
+# the same knob position (checked by rendering: knob 5/8 -> 1.333 Hz = dotted
+# quarter, 6/8 -> 3.0 Hz = quarter triplet at 120 BPM).
+FX_RATE_RUNS: list[tuple[int, int, int]] = [  # (first knob step, Vital tempo index, sync mode)
+    (0, 0, SYNC_TEMPO),          # Off (LFO stopped) -> Freeze
+    (4, 2, SYNC_DOTTED),         # 24 bar = dotted 16 bar
+    (12, 1, SYNC_TRIPLET),       # 32 bar t
+    (19, 2, SYNC_TEMPO),         # 16 bar
+    (27, 3, SYNC_DOTTED),        # 12 bar
+    (35, 2, SYNC_TRIPLET),       # 16 bar t
+    (42, 3, SYNC_TEMPO),         # 8 bar
+    (50, 4, SYNC_DOTTED),        # 6 bar
+    (57, 3, SYNC_TRIPLET),       # 8 bar t
+    (65, 4, SYNC_TEMPO),         # 4 bar
+    (73, 5, SYNC_DOTTED),        # 3 bar
+    (80, 4, SYNC_TRIPLET),       # 4 bar t
+    (88, 5, SYNC_TEMPO),         # 2 bar
+    (95, 6, SYNC_DOTTED),        # 1.5 bar
+    (103, 5, SYNC_TRIPLET),      # 2 bar t
+    (111, 6, SYNC_TEMPO),        # bar
+    (118, 7, SYNC_DOTTED),       # 1/2.
+    (126, 6, SYNC_TRIPLET),      # bar t
+    (133, 7, SYNC_TEMPO),        # 1/2
+    (141, 8, SYNC_DOTTED),       # 1/4.
+    (149, 7, SYNC_TRIPLET),      # 1/2 t
+    (156, 8, SYNC_TEMPO),        # 1/4
+    (164, 9, SYNC_DOTTED),       # 1/8.
+    (171, 8, SYNC_TRIPLET),      # 1/4 t
+    (179, 9, SYNC_TEMPO),        # 1/8
+    (187, 10, SYNC_DOTTED),      # 1/16.
+    (194, 9, SYNC_TRIPLET),      # 1/8 t
+    (202, 10, SYNC_TEMPO),       # 1/16
+    (209, 11, SYNC_DOTTED),      # 1/32.
+    (217, 10, SYNC_TRIPLET),     # 1/16 t
+    (225, 11, SYNC_TEMPO),       # 1/32
+]
+
+
+def fx_rate_sync(step: int) -> tuple[int, int]:
+    """(sync mode, Vital tempo index) for a synced RATE knob step (0..228)."""
+    sync, tempo = SYNC_TEMPO, 0
+    for first, index, mode in FX_RATE_RUNS:
+        if step >= first:
+            sync, tempo = mode, index
+    return sync, tempo
+
+
+def fx_rate_step_from_hz(hz: float) -> int:
+    """Knob step (0..228) of a Serum 2 rate stored in Hz on the 20 n^4 law."""
+    return int(round(clamp01((max(hz, 0.0) / 20.0) ** 0.25) * 228))
+
+
+# ---- Serum 2 synced delay ladder -------------------------------------------
+# The stored kParamTime (seconds) is the knob position; when beat-synced Serum
+# quantises it to a division.  Boundaries measured by rendering a sweep of
+# crafted presets at 120 BPM (upper bound of each division, seconds).
+DELAY_SYNC_BOUNDS: list[tuple[float, int]] = [
+    (0.007, 12),   # 1/64
+    (0.014, 11),   # 1/32
+    (0.0295, 10),  # 1/16
+    (0.065, 9),    # 1/8   (factory "8th Delay" stores 0.0387)
+    (0.11, 8),     # 1/4   (factory "4th Delay" stores 0.0832)
+    (0.1795, 7),   # 1/2   (0.1787 renders as a half note, 0.18 as a bar)
+    (0.27, 6),     # 1 bar
+    (0.41, 5),     # 2 bars
+]
+
+
+def delay_seconds_to_tempo_index(seconds: float, lo: int = 4, hi: int = 12) -> int:
+    for bound, index in DELAY_SYNC_BOUNDS:
+        if seconds < bound:
+            return max(lo, min(hi, index))
+    return max(lo, min(hi, 4))   # 4 bars and beyond
+
+
+# ---- distortion ------------------------------------------------------------
+# Output level of Serum's distortion relative to its input on a -17 dBFS saw,
+# per mode and DRIVE knob (every mode sits 6 dB below unity at zero drive).
+DIST_SERUM_LEVEL: dict[str, list[tuple[float, float]]] = {
+    "tube": [(0.0, -6.0), (0.25, -4.3), (0.5, -2.0), (0.66, -0.1), (0.75, 1.1), (1.0, 7.3)],
+    "softclip": [(0.0, -6.0), (0.25, -5.6), (0.5, -3.3), (0.66, -0.7), (0.75, 0.8), (1.0, 4.3)],
+    "hardclip": [(0.0, -6.0), (0.25, -5.5), (0.5, -2.5), (0.66, 0.6), (0.75, 2.5), (1.0, 6.0)],
+    "diode1": [(0.0, 5.0), (0.25, 5.1), (0.5, 5.9), (0.66, 6.5), (0.75, 6.7), (1.0, 7.3)],
+    "diode2": [(0.0, 5.6), (0.25, 5.6), (0.5, 5.4), (0.66, 5.1), (0.75, 5.0), (1.0, 4.8)],
+    "zerosquare": [(0.0, -6.1), (0.25, 0.7), (0.5, 4.6), (0.66, 6.1), (0.75, 6.8), (1.0, 7.6)],
+    "asym": [(0.0, -4.4), (0.25, 1.1), (0.5, 5.2), (0.66, 6.2), (0.75, 6.4), (1.0, 6.7)],
+    "rectify": [(0.0, -6.0), (0.25, 1.0), (0.5, 6.4), (0.66, 7.1), (0.75, 7.4), (1.0, 7.7)],
+    # X-Shaper's default (linear) curve is a -6 dB pad at any drive, but presets
+    # draw their own saturating curve, which is dropped; the tube law is the
+    # better guess for the level of a drawn curve (library check).
+    "xshaper": [(0.0, -6.0), (0.25, -4.3), (0.5, -2.0), (0.66, -0.1), (0.75, 1.1), (1.0, 7.3)],
+    "xshaperasym": [(0.0, -6.0), (0.25, -4.3), (0.5, -2.0), (0.66, -0.1), (0.75, 1.1), (1.0, 7.3)],
+    "stompbox": [(0.0, -6.0), (0.25, 2.5), (0.5, 4.5), (0.66, 5.0), (0.75, 5.1), (1.0, 5.5)],
+    "tapesat": [(0.0, -6.0), (0.25, -1.2), (0.5, 1.6), (0.66, 2.5), (0.75, 2.8), (1.0, 3.5)],
+}
+# Fold modes are matched on spectral centroid instead: Vital drive per knob.
+DIST_FOLD_DRIVE: dict[str, list[tuple[float, float]]] = {
+    "linfold": [(0.0, -6.0), (0.25, 21.0), (0.5, 27.0), (0.66, 28.0), (0.75, 29.0), (1.0, 30.0)],
+    "linearfold": [(0.0, -6.0), (0.25, 21.0), (0.5, 27.0), (0.66, 28.0), (0.75, 29.0), (1.0, 30.0)],
+    "sinfold": [(0.0, -6.0), (0.25, 18.0), (0.5, 19.0), (0.66, 21.0), (0.75, 21.0), (1.0, 22.0)],
+    "sinefold": [(0.0, -6.0), (0.25, 18.0), (0.5, 19.0), (0.66, 21.0), (0.75, 21.0), (1.0, 22.0)],
+    "sineshaper": [(0.0, 0.0), (0.25, 6.0), (0.5, 9.0), (0.66, 18.0), (0.75, 21.0), (1.0, 21.0)],
+}
+# Vital's output level per drive on the same saw (soft clip / hard clip).
+VITAL_DRIVE_LEVEL: dict[int, list[tuple[float, float]]] = {
+    DIST_SOFT_CLIP: [(-30.0, -30.0), (0.0, -0.5), (3.0, 2.0), (6.0, 4.2), (9.0, 6.0), (12.0, 7.3), (15.0, 8.1),
+                     (18.0, 8.7), (21.0, 9.0), (24.0, 9.3), (27.0, 9.4), (30.0, 9.5)],
+    DIST_HARD_CLIP: [(-30.0, -30.0), (0.0, 0.0), (3.0, 3.0), (6.0, 5.9), (9.0, 7.4), (12.0, 8.2), (15.0, 8.7),
+                     (18.0, 9.1), (21.0, 9.3), (24.0, 9.4), (27.0, 9.5), (30.0, 9.6)],
+}
+
+
+def dist_settings(mode_name: str, knob: float) -> tuple[int, float, bool]:
+    """(Vital distortion type, drive dB, exact) for a Serum mode name and DRIVE knob 0..1.
+
+    Clipping modes are matched on output level (Serum's drive is a pre-gain
+    behind a fixed -6 dB pad and a mode-specific shaper), fold modes on the
+    spectral centroid, downsample on a linear guess.
+    """
+    key = normalise_dist_name(mode_name)
+    knob = clamp01(knob)
+    vital_type, exact = DIST_MODE_TO_VITAL.get(key, (DIST_SOFT_CLIP, False))
+    if key in DIST_FOLD_DRIVE:
+        return vital_type, _interp(knob, DIST_FOLD_DRIVE[key]), exact
+    if key == "downsample":
+        return DIST_DOWN_SAMPLE, -27.0 + 40.0 * knob, exact
+    if key == "bitcrush":
+        return DIST_BIT_CRUSH, -30.0 + 45.0 * knob, exact
+    level = _interp(knob, DIST_SERUM_LEVEL.get(key, DIST_SERUM_LEVEL["tube"]))
+    table = VITAL_DRIVE_LEVEL.get(vital_type, VITAL_DRIVE_LEVEL[DIST_SOFT_CLIP])
+    return vital_type, max(-30.0, min(30.0, _interp_inverse(level, table))), exact
+
+
+# ---- EQ --------------------------------------------------------------------
+# Serum's Q knob (0..1) against Vital's resonance (0..1, Q = 0.5 + 15.5 r^3),
+# matched on octave-band responses; Vital's shelves sit half an octave higher
+# than Serum's and peak with any resonance, so they are shifted and left flat.
+EQ_PEAK_RESONANCE = [(0.2, 0.0), (0.6, 0.8), (0.9, 1.0)]
+EQ_PASS_RESONANCE = [(0.2, 0.0), (0.6, 0.7), (0.9, 0.93), (1.0, 1.0)]
+EQ_SHELF_SHIFT_SEMITONES = -6.0
+
+
+def eq_resonance(q: float, kind: str) -> float:
+    if kind == "peak":
+        return clamp01(_interp(q, EQ_PEAK_RESONANCE))
+    if kind == "pass":
+        return clamp01(_interp(q, EQ_PASS_RESONANCE))
+    return 0.0
+
+
+# ---- reverb ----------------------------------------------------------------
+# RT60 as measured by the fixture tool's slope fit (same method on both synths).
+# Serum 1: a floor set by SIZE, overtaken by the DECAY knob (0.8..12 s displayed)
+# as 2000 / (12.5 - decay)^3; at 12 s the tail no longer decays.
+SERUM1_REVERB_FLOOR = [(0.1, 0.7), (0.2, 0.88), (0.35, 1.14), (0.5, 1.81), (0.65, 3.2), (0.8, 5.3), (1.0, 7.0)]
+# Vital: RT60 = 1.45 * decay_time * f(size).
+VITAL_REVERB_SIZE_FACTOR = [(0.0, 1.52), (0.25, 1.16), (0.35, 1.0), (0.5, 0.9), (0.75, 0.81), (1.0, 0.76)]
+REVERB_MAX_RT60 = 60.0
+
+
+def serum1_reverb_rt60(size: float, decay_seconds: float) -> float:
+    floor = _interp(clamp01(size), SERUM1_REVERB_FLOOR)
+    if decay_seconds >= 12.4:
+        return REVERB_MAX_RT60
+    # The slope fit reads the floor up to 2.1 s of decay, but cutting the tail to
+    # that floor made real presets worse (listening sets); the cubic term is
+    # kept over the whole range, it only exceeds the floor slightly below 3 s.
+    return min(REVERB_MAX_RT60, max(floor, 2000.0 / (12.5 - decay_seconds) ** 3))
+
+
+def vital_decay_for_rt60(rt60: float, size: float) -> float:
+    """Vital `reverb_decay_time` (log2 seconds) giving `rt60` at `size`."""
+    seconds = max(0.05, rt60) / (1.45 * _interp(clamp01(size), VITAL_REVERB_SIZE_FACTOR))
+    return max(-6.0, min(6.0, math.log2(seconds)))
+
+
+# Serum 2 reverb types (library-median settings for the other knobs).
+S2_PLATE_RT60 = [(0.0, 0.2), (10.0, 0.4), (20.0, 0.94), (35.0, 3.05), (50.0, 7.9), (65.0, 11.9), (100.0, 11.9)]
+S2_HALL_FLOOR = [(0.0, 3.0), (50.0, 3.2), (80.0, 5.5), (100.0, 7.0)]
+S2_VINTAGE_RT60 = [(0.0, 0.5), (20.0, 0.9), (45.0, 1.8), (80.0, 6.3), (100.0, 9.0)]
+S2_ABYSS_GRID = {  # size -> [(kParamDelay, RT60)]
+    0.0: [(0.0, 0.1), (30.0, 1.2), (100.0, 2.5)],
+    15.0: [(0.0, 0.23), (30.0, 2.5), (100.0, 5.1)],
+    34.0: [(0.0, 1.66), (30.0, 5.7), (100.0, 7.4)],
+    65.0: [(0.0, 5.0), (30.0, 8.4), (100.0, 12.1)],
+    100.0: [(0.0, 7.0), (30.0, 11.0), (100.0, 15.0)],
+}
+
+
+def serum2_reverb_rt60(kind: str, size: float, delay: float) -> float:
+    """RT60 of a Serum 2 reverb module (kind = kPlate/kHall/kVintage/kAbyss/kSpace)."""
+    if kind == "kPlate":
+        return _interp(size, S2_PLATE_RT60)
+    if kind == "kVintage":
+        return _interp(size, S2_VINTAGE_RT60)
+    if kind == "kAbyss":
+        sizes = sorted(S2_ABYSS_GRID)
+        rows = [(s, _interp(delay, S2_ABYSS_GRID[s])) for s in sizes]
+        return _interp(size, rows)
+    # Hall (and Space, which could not be rendered): floor by size, DECAY/PRE-DLY knob exponential.
+    grown = 3.0 * math.exp((delay - 30.0) / 35.0)
+    return min(REVERB_MAX_RT60, max(_interp(size, S2_HALL_FLOOR), grown))
+
+
+def reverb_tone(hicut: float, locut: float) -> tuple[float, float]:
+    """(reverb_pre_high_cutoff, reverb_pre_low_cutoff) for Serum 1 HI CUT / LO CUT knobs (0..1).
+
+    Serum's tail is brighter than Vital's at any setting, so the high cut only
+    starts closing Vital's pre-filter; the laws match the measured centroid
+    shift (-0.8 octave at HI CUT 80 %, +0.37 octave and -6 dB at LO CUT 80 %).
+    """
+    return 128.0 - 35.0 * clamp01(hicut), 30.0 + 60.0 * clamp01(locut)
+
+
+# ---- compressor ------------------------------------------------------------
+# Serum's multiband mode is an OTT-style upward + downward compressor (quiet
+# input +3 dB and bright, loud input -8 dB); Vital's multiband compressor is
+# the same design.  Constants matched on quiet / normal / loud fixtures.
+MB_UPPER_OFFSET_DB = 3.0      # Vital upper threshold above Serum's THRESH
+MB_LOWER_GAP_DB = 5.0         # Vital lower threshold below the upper one
+MB_LOWER_RATIO = 0.8
+MB_BAND_TRIM_DB = {"low": -1.5, "band": -3.5, "high": 1.5}
+# Below its default threshold Serum's multiband output falls faster than the
+# threshold itself (-12.9 dB for an 8.2 dB lower THRESH, -21 dB for 16 dB more);
+# Vital's downward compression cannot go below its threshold, so the difference
+# is added as band gain.  Serum 2's multiband mode does not rise above the
+# default the way Serum 1's does, so the term is one-sided.
+MB_REFERENCE_THRESHOLD_DB = -17.6
+MB_THRESHOLD_GAIN_SLOPE = 0.85
+
+
+def mb_ratio_scale(ratio: float) -> float:
+    """Serum's RATIO knob scales the whole multiband effect (upward and downward):
+    at 1:1 the module is transparent apart from +1.9 dB (fixtures at 0 / 1.2:1 / 1.7:1 / 4:1)."""
+    return clamp01(ratio / 0.75)
+
+
+MB_UNITY_GAIN_DB = 1.9        # multiband output at ratio 1:1, any threshold
+# Serum's multiband wet knob cancels against the band-split path (about -3 dB
+# at 50 % on the fixture saw); a gain term for that pulled real presets down and
+# silenced a preset with wet at 0, so the wet knob stays a plain Vital mix.
+
+
+def mb_threshold_gain_db(threshold_db: float, ratio: float = 0.75) -> float:
+    """Measured at Serum's default 4:1 ratio (0.75); scaled down towards 1:1."""
+    scale = mb_ratio_scale(ratio)
+    return max(-22.0, scale * MB_THRESHOLD_GAIN_SLOPE * min(0.0, threshold_db - MB_REFERENCE_THRESHOLD_DB))
+
+
+def mb_band_settings(threshold_db: float, ratio: float, band: str, wet: float = 1.0) -> dict:
+    """Vital compressor band values for Serum's multiband mode (before makeup / band knobs)."""
+    scale = mb_ratio_scale(ratio)
+    upper = max(-80.0, min(0.0, threshold_db + MB_UPPER_OFFSET_DB))
+    gain = (scale * MB_BAND_TRIM_DB[band] + (1.0 - scale) * MB_UNITY_GAIN_DB
+            + mb_threshold_gain_db(threshold_db, ratio))
+    return {
+        "upper_threshold": upper,
+        "lower_threshold": max(-80.0, upper - MB_LOWER_GAP_DB),
+        "upper_ratio": clamp01(ratio),
+        "lower_ratio": MB_LOWER_RATIO * scale,
+        "gain": gain,
+    }
+
+
+def mb_band_gain_db(percent: float) -> float:
+    """Serum's per-band L/M/H knob (0..200 %, 100 % neutral) -> band gain dB (+10 at 200 %, -12 floor)."""
+    return max(-12.0, min(10.0, 33.0 * math.log10(max(percent, 5.0) / 100.0)))
+
+
+# ---- phaser / flanger ------------------------------------------------------
+# Serum's STEREO 180 degrees measures like a Vital phase offset of 0.02 (phaser)
+# and 0.1 (flanger) on side level and L/R correlation; Serum's flanger sits at
+# a fixed ~16 ms base delay (Vital centre note 34).
+PHASER_OFFSET_PER_180 = 0.02
+FLANGER_OFFSET_PER_180 = 0.1
+FLANGER_CENTER_NOTE = 34.0

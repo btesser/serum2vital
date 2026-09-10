@@ -417,6 +417,9 @@ UNISON_TUNING_TO_POWER = {"Linear": 0.0, "Super": 0.0, "Exp": 1.5, "Inv": -2.0, 
 # Serum's unison stack changes the oscillator's level with the voice count
 # (Vital's stays flat).  Measured twice on the init saw at default detune and
 # blend, relative to one voice; intermediate counts are interpolated.
+# Serum 2 conversions were 3.0 dB louder than Serum 2's own render of the same preset.
+S2_LEVEL_OFFSET_DB = 3.0
+
 # Calibration switches, mainly so tools/evaluate.py can ablate one change at a time.
 CALIB = {"drive_residual": False, "sub_linear": True, "unison_gain": False,
          "lfo_invert": False, "lfo_wrap": True, "lfo_power_flip": False, "comp_excess_scale": 0.5,
@@ -626,11 +629,13 @@ def _chaos_from_serum1(conv: Conversion, patch: serum1.Serum1Patch) -> None:
 
 
 def _fx_rate(conv: Conversion, prefix: str, synced: bool, rate: float, what: str) -> None:
-    """Chorus/flanger/phaser rate: 20 Hz quartic knob, or 8 bar..1/32 when synced."""
+    """Chorus/flanger/phaser rate: 20 Hz quartic knob, or the 31-entry synced ladder (fx_common.FX_RATE_RUNS)."""
     if synced:
-        conv.set(f"{prefix}_sync", SYNC_TEMPO)
-        division = st.lfo_division(rate_step(rate))
-        conv.set(f"{prefix}_tempo", max(0.0, min(10.0, division_to_tempo(division, conv, what))))
+        sync, tempo = fx_common.fx_rate_sync(rate_step(rate))
+        conv.set(f"{prefix}_sync", float(sync))
+        conv.set(f"{prefix}_tempo", float(max(0, min(10, tempo))))
+        if tempo > 10:
+            conv.note(f"approximation: {what} synced rate 1/32 clamped to Vital's 1/16")
     else:
         conv.set(f"{prefix}_sync", SYNC_SECONDS)
         conv.set(f"{prefix}_frequency", log2_hz(st.fx_rate_hz(rate), 2.0 ** -6))
@@ -640,13 +645,19 @@ def _effects_from_serum1(conv: Conversion, patch: serum1.Serum1Patch) -> None:
     # --- reverb ---
     if _p(patch, "Rev Enable") > 0.5:
         conv.set("reverb_on", 1.0)
-        conv.set("reverb_dry_wet", 0.75 * _display(patch, "Verb Wet") / 100.0)  # Vital's reverb runs ~2 dB hot
-        conv.set("reverb_size", _display(patch, "VerbSize") / 100.0)
-        conv.set("reverb_decay_time", -2.0 + 6.0 * _p(patch, "VerbSize"))
-        conv.set("reverb_delay", 0.3 * _p(patch, "VerbPDly") ** 2)
-        conv.set("reverb_pre_low_cutoff", 128.0 * _display(patch, "VerbLoCt") / 100.0)
-        conv.set("reverb_high_shelf_cutoff", 128.0 * (1.0 - _display(patch, "VerbHiCt") / 100.0))
-        conv.set("reverb_chorus_amount", _display(patch, "VerbWdth") / 100.0 * 0.5)
+        conv.set("reverb_dry_wet", fx_common.serum_wet_to_vital(_display(patch, "Verb Wet") / 100.0, fx_common.REVERB_WET_SCALE))
+        size = _display(patch, "VerbSize") / 100.0
+        conv.set("reverb_size", size)
+        # Serum's DECAY (0.8..12 s displayed) and SIZE give the tail's RT60 (measured law);
+        # Vital's decay_time is set so its tail measures the same RT60 at that size.
+        rt60 = fx_common.serum1_reverb_rt60(size, _display(patch, "VerbDecay"))
+        conv.set("reverb_decay_time", fx_common.vital_decay_for_rt60(rt60, size))
+        pre_high, pre_low = fx_common.reverb_tone(_display(patch, "VerbHiCt") / 100.0, _display(patch, "VerbLoCt") / 100.0)
+        conv.set("reverb_pre_high_cutoff", pre_high)
+        conv.set("reverb_pre_low_cutoff", pre_low)
+        conv.set("reverb_high_shelf_gain", 0.0)   # Serum's tail is brighter than Vital's default (-1 dB shelf)
+        conv.set("reverb_chorus_amount", _display(patch, "VerbSpinDepth") / 100.0)
+        conv.set("reverb_chorus_frequency", log2_hz(st.fx_rate_hz(_p(patch, "VerbSpinRate")), 2.0 ** -8))
         conv.note("approximation: reverb size/decay/damping mapped by ear; Vital's reverb is a different algorithm")
         if not patch.settings.reverb_hall:
             conv.note("approximation: Serum's Plate reverb mode has no Vital equivalent; Hall settings used")
@@ -654,28 +665,34 @@ def _effects_from_serum1(conv: Conversion, patch: serum1.Serum1Patch) -> None:
     # --- delay ---
     if _p(patch, "Dly Enable") > 0.5:
         conv.set("delay_on", 1.0)
-        conv.set("delay_dry_wet", _display(patch, "Dly_Wet") / 100.0)
         conv.set("delay_feedback", _display(patch, "Dly_Feed") / 100.0)
         mode_index = st.indexed(_p(patch, "Dly_Mode"), (2,)) or 0
         mode = st.DELAY_MODE_NAMES[min(mode_index, 2)]
         linked = _p(patch, "Dly_Link") > 0.5
+        wet_scale = 1.0
         if mode == "Ping-Pong":
             conv.set("delay_style", 2.0)
+            wet_scale = 0.707   # Vital's ping-pong echoes sit 3 dB above its plain delay; Serum's do not
         elif mode == "Tap->Delay":
             conv.set("delay_style", 0.0)
             conv.note("approximation: delay mode Tap->Delay has no Vital equivalent; mono delay used")
         else:
             conv.set("delay_style", 0.0 if linked else 1.0)
+        conv.set("delay_dry_wet", fx_common.serum_wet_to_vital(_display(patch, "Dly_Wet") / 100.0, wet_scale))
         synced = _p(patch, "Dly_BPM_Sync") > 0.5
-        for side, param, key in (("L", "Dly_TimL", ""), ("R", "Dly_TimR", "aux_")):
+        for side, param, offset_param, key in (("L", "Dly_TimL", "Dly_Off L", ""), ("R", "Dly_TimR", "Dly_Off R", "aux_")):
+            if linked:
+                param, offset_param = "Dly_TimL", "Dly_Off L"
             time = _p(patch, param)
+            multiplier = st.delay_offset(_p(patch, offset_param))
             if synced:
                 division = st.delay_division(rate_step(time))
-                conv.set(f"delay_{key}sync", SYNC_TEMPO)
-                conv.set(f"delay_{key}tempo", max(4.0, min(12.0, division_to_tempo(division, conv, f"delay {side}"))))
+                sync, tempo = fx_common.synced_delay(int(division_to_tempo(division, conv, f"delay {side}")), multiplier)
+                conv.set(f"delay_{key}sync", float(sync))
+                conv.set(f"delay_{key}tempo", float(tempo))
             else:
-                # Unsynced Serum delay: 0..1 knob over roughly 1 ms .. 1 s (approximate).
-                seconds = max(0.001, min(1.0, time ** 2))
+                # Unsynced Serum delay: 1 + 500 n^4 ms (plugin read-out), times the offset knob.
+                seconds = max(0.001, min(4.0, st.delay_seconds(time) * multiplier))
                 conv.set(f"delay_{key}sync", SYNC_SECONDS)
                 conv.set(f"delay_{key}frequency", math.log2(1.0 / seconds))
         conv.set("delay_filter_cutoff", hz_to_note(st.log_hz(_p(patch, "Dly_Freq"), 40.0, 18000.0)))
@@ -685,29 +702,35 @@ def _effects_from_serum1(conv: Conversion, patch: serum1.Serum1Patch) -> None:
     if _p(patch, "Cho Enable") > 0.5:
         conv.set("chorus_on", 1.0)
         conv.chorus_busy = True
-        conv.set("chorus_dry_wet", _display(patch, "Cho_Wet") / 100.0)
+        conv.set("chorus_dry_wet", fx_common.serum_wet_to_vital(_display(patch, "Cho_Wet") / 100.0))
         conv.set("chorus_feedback", 0.95 * _p(patch, "Cho_Feed"))
         conv.set("chorus_mod_depth", _p(patch, "Cho_Dep") ** 2)
         conv.set("chorus_voices", 2.0)
         conv.set("chorus_delay_1", math.log2(max(0.001, 0.02 * _p(patch, "Cho_Dly") ** 2)))
         conv.set("chorus_delay_2", math.log2(max(0.001, 0.02 * _p(patch, "Cho_Dly2") ** 2)))
-        conv.set("chorus_cutoff", hz_to_note(st.log_hz(_p(patch, "Cho_Filt"), 50.0, 20000.0)))
+        # Serum's chorus FILTER is a low-pass on the wet path (1 kHz by default).
+        cutoff, spread = fx_common.chorus_lowpass(st.log_hz(_p(patch, "Cho_Filt"), 50.0, 20000.0))
+        conv.set("chorus_cutoff", cutoff)
+        conv.set("chorus_spread", spread)
         _fx_rate(conv, "chorus", _p(patch, "Cho_BPM_Sync") > 0.5, _p(patch, "Cho_Rate"), "chorus")
         if patch.settings.chorus_mono:
-            # Serum's switch runs the chorus LFO in phase on both channels.
-            conv.set("chorus_spread", 0.0)
+            # Serum's switch runs the chorus LFO in phase on both channels; Vital's
+            # chorus always offsets the right channel's LFO by a quarter cycle.
+            conv.note("approximation: chorus mono switch (in-phase L/R LFO) has no Vital equivalent")
 
     # --- distortion ---
     if _p(patch, "Dist Enable") > 0.5:
         conv.set("distortion_on", 1.0)
-        conv.set("distortion_mix", _display(patch, "Dist_Wet") / 100.0)
-        conv.set("distortion_drive", 16.0 * _display(patch, "Dist_Drv") / 100.0)  # 0 dB at 0%, +16 dB at 100%
+        conv.set("distortion_mix", fx_common.serum_wet_gain(_display(patch, "Dist_Wet") / 100.0) if fx_common else _display(patch, "Dist_Wet") / 100.0)
         mode_index = st.indexed(_p(patch, "Dist_Mode"), (15, 12))
         mode = st.DIST_MODE_NAMES[mode_index] if mode_index is not None and mode_index < 16 else "Tube"
         if fx_common is not None:
-            vital_type, exact = fx_common.dist_mode_index(mode)
+            # Per-mode drive law measured on a saw: Serum pads every mode by -6 dB
+            # at zero drive and each shaper has its own gain curve (fx_common.DIST_SERUM_LEVEL).
+            vital_type, drive_db, exact = fx_common.dist_settings(mode, _p(patch, "Dist_Drv"))
         else:
-            vital_type, exact = 0, mode in ("SoftClip",)
+            vital_type, drive_db, exact = 0, 16.0 * _p(patch, "Dist_Drv"), mode in ("SoftClip",)
+        conv.set("distortion_drive", drive_db)
         conv.set("distortion_type", vital_type)
         if not exact:
             conv.note(f"approximation: distortion mode '{mode}' -> Vital type {vital_type}")
@@ -721,51 +744,57 @@ def _effects_from_serum1(conv: Conversion, patch: serum1.Serum1Patch) -> None:
     # --- phaser / flanger ---
     if _p(patch, "Phs Enable") > 0.5:
         conv.set("phaser_on", 1.0)
-        conv.set("phaser_dry_wet", _display(patch, "Phs_Wet") / 100.0)
+        conv.set("phaser_dry_wet", fx_common.serum_wet_gain(_display(patch, "Phs_Wet") / 100.0))
         conv.set("phaser_feedback", _display(patch, "Phs_Feed") / 100.0)
         conv.set("phaser_center", hz_to_note(st.log_hz(_p(patch, "Phs_Frq"), 20.0, 18000.0)))
         conv.set("phaser_mod_depth", 48.0 * _display(patch, "Phs_Dpth") / 100.0)
-        conv.set("phaser_phase_offset", _display(patch, "Phs_Stereo") / 360.0)
+        conv.set("phaser_phase_offset", fx_common.PHASER_OFFSET_PER_180 * _display(patch, "Phs_Stereo") / 180.0)
         _fx_rate(conv, "phaser", _p(patch, "Phs_BPM_Sync") > 0.5, _p(patch, "Phs_Rate"), "phaser")
 
     if _p(patch, "Flg Enable") > 0.5:
         conv.set("flanger_on", 1.0)
-        conv.set("flanger_dry_wet", 0.5 * _display(patch, "Flg_Wet") / 100.0)
+        conv.set("flanger_dry_wet", 0.5 * fx_common.serum_wet_gain(_display(patch, "Flg_Wet") / 100.0))
         conv.set("flanger_feedback", 2.0 * _display(patch, "Flg_Feed") / 100.0 - 1.0)
         conv.set("flanger_mod_depth", _display(patch, "Flg_Dep") / 100.0)
-        conv.set("flanger_phase_offset", _display(patch, "Flg_Stereo") / 360.0)
+        conv.set("flanger_center", fx_common.FLANGER_CENTER_NOTE)   # Serum's flanger sits at ~16 ms (measured)
+        conv.set("flanger_phase_offset", fx_common.FLANGER_OFFSET_PER_180 * _display(patch, "Flg_Stereo") / 180.0)
         _fx_rate(conv, "flanger", _p(patch, "Flg_BPM_Sync") > 0.5, _p(patch, "Flg_Rate"), "flanger")
 
     # --- compressor ---
     if _p(patch, "Comp Enable") > 0.5:
         conv.set("compressor_on", 1.0)
         conv.set("compressor_mix", _display(patch, "Comp_Wet") / 100.0)
-        conv.set("compressor_attack", _p(patch, "Cmp_Att"))
-        conv.set("compressor_release", _p(patch, "Cmp_Rel"))
+        # Vital's follower time is base_ms * exp(8x - 4) (1.4 / 28 ms bases); Serum's knobs are 1000 n^2 ms.
+        conv.set("compressor_attack", fx_common.comp_time_to_vital(st.comp_ms(_p(patch, "Cmp_Att")), "attack"))
+        conv.set("compressor_release", fx_common.comp_time_to_vital(st.comp_ms(_p(patch, "Cmp_Rel")), "release"))
         threshold = fx_common.comp_threshold_db(_p(patch, "Cmp_Thr")) if fx_common else st.master_db(max(1e-3, 1.0 - _p(patch, "Cmp_Thr")))
         ratio = _p(patch, "Cmp_Rat")            # Serum stores 1 - 1/r, Vital's own scale
-        makeup = 30.0 * _p(patch, "CmpGain") ** 0.7
+        makeup = fx_common.comp_makeup_db(_p(patch, "CmpGain"))
         multiband = _p(patch, "CmpMBnd") > 0.5
         conv.set("compressor_enabled_bands", 0.0 if multiband else 3.0)
-        # Vital's default band gains restore the reduction its compressor
-        # applies at its own default threshold; as the threshold rises the
-        # reduction shrinks but the gain stays, so Vital ends up louder than
-        # Serum.  Measured (crafted presets, saw at -17 dBFS, makeup 0):
-        # Vital - Serum = +0.2 dB at -36 dB, +1.5 dB at -18 dB, +7.3 dB at
-        # -7.5 dB threshold; Serum's multiband mode sits another 10.5 dB lower.
-        excess = _interp(threshold, [(-36.2, 0.2), (-18.1, 1.5), (-7.5, 7.3)])
+        # With no upward (lower) compression, Vital's band gain of 0 dB is unity:
+        # the +16/+12 dB defaults only exist to undo Vital's own default upward
+        # compression, so Serum's makeup goes in directly.  Serum's detector reads
+        # about 4 dB lower than Vital's RMS follower on the same signal (fixtures:
+        # 3.4 vs 5.8 dB reduction at -25.8 dB, 15.1 vs 18.5 dB at -41.9 dB).
         if multiband:
-            excess += 10.5
-        # The grid used a -17 dBFS saw; louder programme material is compressed
-        # more by Vital, which eats part of the excess, so half of it is applied.
-        excess *= CALIB["comp_excess_scale"]
-        for band in ("low", "band", "high"):
-            conv.set(f"compressor_{band}_upper_threshold", max(-80.0, threshold))
-            conv.set(f"compressor_{band}_upper_ratio", max(0.0, min(1.0, ratio)))
-            conv.set(f"compressor_{band}_lower_threshold", -80.0)   # no upward compression in Serum
-            conv.set(f"compressor_{band}_lower_ratio", 0.0)
-            # Vital's default band gains are its unity reference; add Serum's makeup on top.
-            conv.set(f"compressor_{band}_gain", max(-30.0, min(30.0, DEFAULTS[f"compressor_{band}_gain"] + makeup - 3.5 - excess)))
+            # Serum's multiband mode is an OTT-style upward + downward compressor with
+            # per-band L/M/H level knobs (0..200 %); Vital's multiband compressor is the
+            # same design, matched on quiet / normal / loud fixtures (fx_common MB_*).
+            for band, knob in (("low", "CompMB L"), ("band", "CompMB M"), ("high", "CompMB H")):
+                values = fx_common.mb_band_settings(threshold, ratio, band)
+                for key in ("upper_threshold", "lower_threshold", "upper_ratio", "lower_ratio"):
+                    conv.set(f"compressor_{band}_{key}", values[key])
+                gain = makeup + values["gain"] + fx_common.mb_band_gain_db(_display(patch, knob))
+                conv.set(f"compressor_{band}_gain", max(-30.0, min(30.0, gain)))
+        else:
+            threshold += fx_common.COMP_THRESHOLD_OFFSET_DB
+            for band in ("low", "band", "high"):
+                conv.set(f"compressor_{band}_upper_threshold", max(-80.0, min(0.0, threshold)))
+                conv.set(f"compressor_{band}_upper_ratio", max(0.0, min(1.0, ratio)))
+                conv.set(f"compressor_{band}_lower_threshold", -80.0)   # no upward compression in Serum
+                conv.set(f"compressor_{band}_lower_ratio", 0.0)
+                conv.set(f"compressor_{band}_gain", max(-30.0, min(30.0, makeup)))
         conv.note("approximation: compressor threshold/ratio/makeup mapped onto Vital's multiband compressor")
 
     # --- EQ ---
@@ -775,30 +804,33 @@ def _effects_from_serum1(conv: Conversion, patch: serum1.Serum1Patch) -> None:
         high_type = st.indexed(_p(patch, "EQ TypH"), (2,)) or 0
         low_note = hz_to_note(st.log_hz(_p(patch, "EQ FrqL"), 22.0, 20000.0))
         high_note = hz_to_note(st.log_hz(_p(patch, "EQ FrqH"), 22.0, 20000.0))
+        low_q, high_q = _display(patch, "EQ Q L") / 100.0, _display(patch, "EQ Q H") / 100.0
+        shift = fx_common.EQ_SHELF_SHIFT_SEMITONES  # Vital's shelves sit half an octave above Serum's
         if low_type == 1:   # peak: use Vital's band section
             conv.set("eq_band_cutoff", low_note)
             conv.set("eq_band_gain", _display(patch, "EQ VolL"))
-            conv.set("eq_band_resonance", _display(patch, "EQ Q L") / 100.0)
+            conv.set("eq_band_resonance", fx_common.eq_resonance(low_q, "peak"))
         else:
             conv.set("eq_low_mode", 1.0 if low_type == 2 else 0.0)
-            conv.set("eq_low_cutoff", low_note)
+            conv.set("eq_low_cutoff", low_note if low_type == 2 else low_note + shift)
             conv.set("eq_low_gain", _display(patch, "EQ VolL"))
-            conv.set("eq_low_resonance", _display(patch, "EQ Q L") / 100.0)
+            conv.set("eq_low_resonance", fx_common.eq_resonance(low_q, "pass" if low_type == 2 else "shelf"))
         if high_type == 1:
             if low_type == 1:
                 conv.note("conflict: both EQ bands are peaks; Vital has one peak band, high band used as shelf")
                 conv.set("eq_high_mode", 0.0)
-                conv.set("eq_high_cutoff", high_note)
+                conv.set("eq_high_cutoff", high_note + shift)
                 conv.set("eq_high_gain", _display(patch, "EQ VolH"))
+                conv.set("eq_high_resonance", 0.0)
             else:
                 conv.set("eq_band_cutoff", high_note)
                 conv.set("eq_band_gain", _display(patch, "EQ VolH"))
-                conv.set("eq_band_resonance", _display(patch, "EQ Q H") / 100.0)
+                conv.set("eq_band_resonance", fx_common.eq_resonance(high_q, "peak"))
         else:
             conv.set("eq_high_mode", 1.0 if high_type == 2 else 0.0)
-            conv.set("eq_high_cutoff", high_note)
+            conv.set("eq_high_cutoff", high_note if high_type == 2 else high_note + shift)
             conv.set("eq_high_gain", _display(patch, "EQ VolH"))
-            conv.set("eq_high_resonance", _display(patch, "EQ Q H") / 100.0)
+            conv.set("eq_high_resonance", fx_common.eq_resonance(high_q, "pass" if high_type == 2 else "shelf"))
 
     # --- FX filter ---
     if _p(patch, "FX Fil Enable") > 0.5:
@@ -950,7 +982,8 @@ SERUM_DEST_TO_VITAL = {
     "EQ VolH": "eq_high_gain",
     "EQ Q L": "eq_low_resonance",
     "EQ Q H": "eq_high_resonance",
-    "VerbPDly": "reverb_delay",
+    "VerbDecay": "reverb_decay_time",
+    "VerbSpinDepth": "reverb_chorus_amount",
     "Cmp_Rat": "compressor_band_upper_ratio",
     "Dly_TimL": "delay_tempo",
     "Dly_TimR": "delay_aux_tempo",
@@ -1283,7 +1316,10 @@ def convert_serum2(patch) -> Conversion:
     )
 
     master = patch.param("Global0", "kParamMasterVolume", _s2_default("Global", "kParamMasterVolume"))
-    master_db = st.master_db(max(master, 1e-3)) - st.master_db(0.7)
+    # Same 1.6 dB synth offset as the Serum 1 path, plus Serum 2 rendering 1.4 dB
+    # below Serum 1 at identical Init settings (crafted-fixture baselines: the
+    # converted Init came out 3.0 dB above Serum 2's own render).
+    master_db = st.master_db(max(master, 1e-3)) - st.master_db(0.7) - S2_LEVEL_OFFSET_DB
     conv.set("volume", db_to_volume(-6.02 + master_db))
 
     # Oscillators: Serum 2 slots 0..2 are the general engines, 3 is noise and

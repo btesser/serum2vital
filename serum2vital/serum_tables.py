@@ -306,6 +306,16 @@ def comp_ms(n: float) -> float:
     return max(0.1, 1000.0 * n * n)
 
 
+def delay_seconds(n: float) -> float:
+    """Delay time knob, unsynced: 1 ms .. 501 ms as 1 + 500 n^4 (plugin read-out)."""
+    return (1.0 + 500.0 * n ** 4) / 1000.0
+
+
+def delay_offset(n: float) -> float:
+    """Delay OFFSET knob: a 0.5x .. 1.5x multiplier of the time ("Dot 1/2" = 0.75, "Dot" = 1.5)."""
+    return 0.5 + n
+
+
 def lfo_division(step: int) -> str:
     """Division text for an LFO rate knob step (0..228) in BPM mode."""
     for a, b, text in LFO_BPM_RUNS:

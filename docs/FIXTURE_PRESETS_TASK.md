@@ -178,34 +178,47 @@ saved; it records the deviations noted above.
 | `13 rate 1-2.SerumPreset` | LFO 1 synced, RATE readout **1/2**. |
 | `13 rate 1-32.SerumPreset` | LFO 1 synced, RATE readout **1/32**. |
 
-## Batch C: fixtures still wanted (as of 2026-09-09)
+## Batch C: settled by crafted fixtures (2026-09-10)
 
-Everything in batches A and B exists. These would settle the remaining items
-in `FORMATS.md` ("Known unknowns"); all are single changes from Init unless
-stated. Serum 2 files go in `DebugPresets/`, Serum 1 files in
-`DebugPresets/serum1/`.
+Everything in the 2026-09-09 Batch C list except the two GUI-only items has
+been settled without saving anything from a GUI: since both Serum generations
+can be hosted headlessly, `tools/fx_fixtures.py` writes single-purpose presets
+itself (Serum 1 by editing the parameter array of `00 init.fxp` through
+`tools/craft_fxp.py`, Serum 2 by editing the CBOR document of
+`1.SerumPreset`), renders each through Serum and through the converter into
+Vital, and compares effect-specific measurements (echo times and levels, tail
+slope, octave bands, modulation width). The crafted files live in
+`DebugPresets/crafted/serum1/*.fxp` and `DebugPresets/crafted/serum2/*.SerumPreset`
+(477 files, 316 Serum 1 and 161 Serum 2; `manifest.json` lists the settings of each); the renders
+and measurements go to `out/fixtures/`.
+
+    python tools/fx_fixtures.py craft                # write the fixture files
+    python tools/fx_fixtures.py serum [--group reverb]   # render through Serum, out/fixtures/serum.json
+    python tools/fx_fixtures.py vital [--group reverb]   # convert + render Vital, out/fixtures/vital.json
+    python tools/fx_fixtures.py compare              # side-by-side table, out/fixtures/compare.md
+
+What the batch settled (details in `FINDINGS_AND_PLAN.md`, third pass):
+
+| question | fixtures | answer |
+|---|---|---|
+| Serum 2 synced delay-time ladder | `s2 delay sync t *` (stored seconds swept 0.001 .. 1.0, echo time read at 120 BPM) | the stored seconds are quantised at render time; boundaries 0.014 / 0.0295 / 0.065 / 0.11 / 0.1795 / 0.27 / 0.41 s between 1/32 .. 4 bars (`fx_common.DELAY_SYNC_BOUNDS`) |
+| Serum 2 delay dotted / triplet scalars | `s2 delay sync 1-4 dotted`, `triplet` | 1.5 = dotted; 4/3 = the triplet of the next longer division |
+| synced chorus/flanger/phaser RATE | Serum 1 plugin read-out over all 229 knob steps; `s2 chorus sync knob *` renders | a 31-entry ladder (Off, 24 bar, 32 bar t, 16 bar ... 1/16 t, 1/32) by knob position, shared by Serum 2 (`fx_common.FX_RATE_RUNS`) |
+| reverb `kParamDelay` (Hall/Vintage/Abyss) | `s2 reverb <type> size * delay *` | a decay control for Hall and Abyss (Hall: RT60 = 3 s at 30, 7 s at 60, self-oscillating by 150), no effect on Vintage, whose decay follows SIZE alone |
+| Serum 1 reverb knobs | `s1 reverb decay/size/plate/hicut/locut/spin *` | the gist table mislabels index 83/85/87: they are DECAY (0.8 .. 12 s), SPIN RATE and SPIN DEPTH; this build has no pre-delay, damp or width |
+| Serum 1 chorus switch (+0x48) | not a GUI capture | its effect stays as measured on 2026-09-09; Vital's chorus filter spread is no substitute (that was the earlier mapping) and it is now only noted |
+
+Two things still need a GUI:
 
 | File name | What to change from Init | Settles |
 |---|---|---|
-| `14 sources rest.SerumPreset` | Matrix rows 1-n: every Source menu entry **not** used in `12 sources` / `12b sources extra` (the labels are listed in `NOTES.txt`), in menu order, destination Osc A Level, amount +50. Record the labels. | source ids 39-44 |
-| `15 aux.SerumPreset` | Matrix row 1: Source **LFO 1**, Destination Osc A Level, amount +50, aux/"Mod Src" column set to **Mod Wheel**. | Serum 2 aux id encoding |
-| `16 delay 1-64.SerumPreset` … `16 delay 4bar.SerumPreset` | Delay enabled, beat sync on, time set to **1/64**, **1/16**, **1/4**, **1 bar**, **4 bar** (one file each; keep L/R linked). | synced delay-time law |
-| `17 chorus rate 1-32.SerumPreset`, `17 chorus rate 8bar.SerumPreset` | Chorus enabled, rate synced, RATE at **1/32** and at **8 bar**. | synced FX rate law |
-| `18 reverb hall decay.SerumPreset` | Reverb enabled, type **Hall**, DECAY at maximum, PRE-DLY at 100 ms (or another pair of values you note). | whether `kParamDelay` is decay or pre-delay |
-| `26 chorus switch.fxp` (Serum 1) | FX tab: enable **Chorus** and toggle the one button on its panel that is not BPM; write down its label. | the GUI name of switch-block field +0x48 (its effect, no L/R LFO offset, is already measured and mapped) |
+| `14 sources rest.SerumPreset` (Serum 2) | Matrix rows 1-n: every Source menu entry **not** used in `12 sources` / `12b sources extra` (labels in `NOTES.txt`), in menu order, destination Osc A Level, amount +50. Record the labels. | source ids 39-44 (not observable from audio) |
+| `26 chorus switch.fxp` (Serum 1) | FX tab: enable **Chorus** and toggle the one button on its panel that is not BPM; write down its label. | the GUI name of switch-block field +0x48 |
 
-Not needed any more: the A4 reference (+0x00) and oversampling (+0x20) were
-identified by rendering crafted presets, the LFO 5-8 switches of old builds
-were shown never to have been saved, and the aux id encoding is settled by the
-library. The remaining Serum 1 block fields (+0x04, +0x30, +0x4C, +0x58,
-+0x60) change nothing audible; no fixture is requested for them.
-
-The Serum 2 rows above are no longer the only route to those laws: since
-2026-09-10 `tools/serum2_host.py` loads a `.SerumPreset` into Serum2.vst3
-headlessly (DawDreamer) and renders it, so a crafted preset (edit the CBOR
-document, rebuild the container) can replace a GUI-saved fixture for the
-delay-time, FX-rate and reverb questions. Source ids 39-44 still need the
-menu capture, since the id-to-label mapping is not observable from audio.
+Two behaviours of the hosts matter when adding fixtures: Serum's reverb does
+not respond to a 30 ms blip at larger sizes (or after a few seconds of silence),
+so tail fixtures play a 0.3 s note; and the `kSpace` reverb type renders
+silence headlessly (its output could not be measured; it is mapped like Hall).
 
 ## After saving new fixtures
 

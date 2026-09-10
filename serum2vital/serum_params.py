@@ -94,11 +94,11 @@ PARAMS = [
     ('Mast.Tun', 0.0, 0.0, '', 0.0),  # 80
     ('Verb Wet', 0.0, 100.0, '%', 33.0),  # 81
     ('VerbSize', 0.0, 100.0, '%', 33.0),  # 82
-    ('VerbPDly', 0.0, 1.0, 'ms', 0.12),  # 83
+    ('VerbDecay', 0.8, 12.0, 's', 2.144),  # 83  (gist says pre-delay; the plugin's own name is Decay, 0.8..12 s)
     ('VerbLoCt', 0.0, 100.0, '%', 0.0),  # 84
-    ('VerbDamp', 0.0, 100.0, '%', 28.0),  # 85
+    ('VerbSpinRate', 0.0, 100.0, '%', 25.0),  # 85  (gist: damp; plugin: Spin Rate)
     ('VerbHiCt', 0.0, 100.0, '%', 50.0),  # 86
-    ('VerbWdth', 0.0, 100.0, '%', 100.0),  # 87
+    ('VerbSpinDepth', 0.0, 100.0, '%', 20.0),  # 87  (gist: width; plugin: Spin Depth)
     ('EQ FrqL', 0.0, 1.0, 'Hz', 0.333),  # 88
     ('EQ FrqH', 0.0, 1.0, 'Hz', 0.666),  # 89
     ('EQ Q L', 0.0, 100.0, '%', 60.0),  # 90
@@ -204,7 +204,7 @@ PARAMS = [
     ('Mod 6 amt', -100.0, 100.0, '', 0.0),  # 190
     ('Mod 6 out', 0.0, 100.0, '', 100.0),  # 191
     ('Mod 7 amt', -100.0, 100.0, '', 0.0),  # 192
-    ('Mod 8 out', 0.0, 100.0, '', 100.0),  # 193
+    ('Mod 7 out', 0.0, 100.0, '', 100.0),  # 193
     ('Mod 8 amt', -100.0, 100.0, '', 0.0),  # 194
     ('Mod 8 out', 0.0, 100.0, '', 100.0),  # 195
     ('Mod 9 amt', -100.0, 100.0, '', 0.0),  # 196
@@ -281,9 +281,9 @@ PARAMS = [
     ('LFO8 smooth', 0.0, 100.0, '', 0.0),  # 267
     ('FXFil Pan', 0.0, 100.0, '%', 50.0),  # 268
     ('Comp_Wet', 0.0, 100.0, '%', 50.0),  # 269
-    ('Gain L', 0.0, 200.0, '%', 100.0),  # 270
-    ('Gain M', 0.0, 200.0, '%', 100.0),  # 271
-    ('Gain H', 0.0, 200.0, '%', 100.0),  # 272
+    ('CompMB L', 0.0, 200.0, '%', 100.0),  # 270
+    ('CompMB M', 0.0, 200.0, '%', 100.0),  # 271
+    ('CompMB H', 0.0, 200.0, '%', 100.0),  # 272
     ('LFO1 Rise', 0.0, 1.0, '', 0.0),  # 273
     ('LFO2 Rise', 0.0, 1.0, '', 0.0),  # 274
     ('LFO3 Rise', 0.0, 1.0, '', 0.0),  # 275
@@ -300,16 +300,16 @@ PARAMS = [
     ('LFO6 Delay', 0.0, 1.0, '', 0.0),  # 286
     ('LFO7 Delay', 0.0, 1.0, '', 0.0),  # 287
     ('LFO8 Delay', 0.0, 1.0, '', 0.0),  # 288
-    ('FX Dist Level', 0.0, 1.0, '', 0.0),  # 289
-    ('FX Flg Level', 0.0, 1.0, '', 0.0),  # 290
-    ('FX Phaser Level', 0.0, 1.0, '', 0.0),  # 291
-    ('FX Chorus Level', 0.0, 1.0, '', 0.0),  # 292
-    ('FX Delay Level', 0.0, 1.0, '', 0.0),  # 293
-    ('FX Comp Level', 0.0, 1.0, '', 0.0),  # 294
-    ('FX Reverb Level', 0.0, 1.0, '', 0.0),  # 295
-    ('FX DimExp Level', 0.0, 1.0, '', 0.0),  # 296
-    ('FX Filter Level', 0.0, 1.0, '', 0.0),  # 297
-    ('FX Hyper Level', 0.0, 1.0, '', 0.0),  # 298
+    ('FX Dist Level', 0.0, 1.0, '', 0.5),  # 289  (plugin: -oo..+12 dB as 40*log10(2n), 0.5 = 0 dB)
+    ('FX Flg Level', 0.0, 1.0, '', 0.5),  # 290  (plugin: -oo..+12 dB as 40*log10(2n), 0.5 = 0 dB)
+    ('FX Phaser Level', 0.0, 1.0, '', 0.5),  # 291  (plugin: -oo..+12 dB as 40*log10(2n), 0.5 = 0 dB)
+    ('FX Chorus Level', 0.0, 1.0, '', 0.5),  # 292  (plugin: -oo..+12 dB as 40*log10(2n), 0.5 = 0 dB)
+    ('FX Delay Level', 0.0, 1.0, '', 0.5),  # 293  (plugin: -oo..+12 dB as 40*log10(2n), 0.5 = 0 dB)
+    ('FX Comp Level', 0.0, 1.0, '', 0.5),  # 294  (plugin: -oo..+12 dB as 40*log10(2n), 0.5 = 0 dB)
+    ('FX Reverb Level', 0.0, 1.0, '', 0.5),  # 295  (plugin: -oo..+12 dB as 40*log10(2n), 0.5 = 0 dB)
+    ('FX DimExp Level', 0.0, 1.0, '', 0.5),  # 296  (plugin: -oo..+12 dB as 40*log10(2n), 0.5 = 0 dB)
+    ('FX Filter Level', 0.0, 1.0, '', 0.5),  # 297  (plugin: -oo..+12 dB as 40*log10(2n), 0.5 = 0 dB)
+    ('FX Hyper Level', 0.0, 1.0, '', 0.5),  # 298  (plugin: -oo..+12 dB as 40*log10(2n), 0.5 = 0 dB)
 ]
 
 NAME_TO_INDEX = {spec[0]: i for i, spec in enumerate(PARAMS)}

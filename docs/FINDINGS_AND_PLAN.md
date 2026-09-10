@@ -457,3 +457,117 @@ envelope correlation 0.609.
   it: −11.6 dB at 90% resonance and 35% cutoff), EQ (±3 dB, shelf laws
   differ). These are the next measurable items.
 
+
+### Third pass (2026-09-10): effect fixtures
+
+`tools/fx_fixtures.py` crafts 477 single-purpose presets (Serum 1 from
+`00 init.fxp` through `tools/craft_fxp.py`, Serum 2 from `1.SerumPreset` by
+editing its CBOR document), renders each through Serum and through the
+converter into Vital, and measures echo times and levels, tail slope (RT60),
+octave bands, crest factor and side level, so an effect law can be fitted on
+Serum and checked on Vital with the same numbers. Vital's own effect source
+(mtytel/vital) was read alongside. What it settled, effect by effect:
+
+* **Mix law.** Serum's MIX knob applies sin²(πw/2) to the wet path and about
+  (1 − w²) to the dry (delay, distortion and reverb fixtures agree); Vital's
+  delay, chorus and reverb crossfade equal-power. The converter now picks
+  the Vital position whose wet gain matches (`fx_common.serum_wet_to_vital`),
+  which puts delay echoes within 0.4 dB of Serum's at 18 / 30 / 50 / 100 %
+  wet (they were 3.5 dB hot at 50 %). Vital's ping-pong echoes sit 3 dB
+  above its plain delay's, Serum's do not (wet scaled by 0.707).
+* **Delay.** Serum 1's free time knob is 1 + 500·n⁴ ms (plugin read-out),
+  not n² seconds: a 75 % knob is 159 ms, the converter had made it 580 ms.
+  The OFFSET knob multiplies the time by 0.5 .. 1.5 ("Dot 1/2" = 0.75,
+  "Dot" = 1.5) in both modes; it was ignored. Serum 2 stores the knob's
+  seconds and quantises them to a division at render time: the boundaries
+  (0.014 / 0.0295 / 0.065 / 0.11 / 0.1795 / 0.27 / 0.41 s between 1/32 and
+  4 bars at 120 BPM) replace the geometric ladder, and its "triplet" scalar
+  4/3 is the triplet of the next longer division (Vital's triplet is 2/3).
+* **Synced modulation rate.** Serum 1's RATE knob in BPM mode steps through
+  31 entries (Off, 24 bar, 32 bar t, 16 bar, 12 bar ... 1/16 t, 1/32), i.e.
+  plain, dotted and triplet divisions, and the converter had used the LFO's
+  plain 16-steps-per-octave table for it. Serum 2 keeps the knob as Hz and
+  quantises the same knob position (the 5/8 and 6/8 positions rendered as a
+  dotted quarter, 1.333 Hz, and a quarter triplet, 3.0 Hz).
+* **Chorus.** Serum's FILTER knob is a low-pass on the wet path, 1 kHz by
+  default. Vital's chorus filter is a low-pass at cutoff + spread·96
+  semitones with a high-pass at cutoff − spread·96, and the converter had set
+  the cutoff while leaving the spread at 1.0, which disables the filter
+  entirely (centroid 6.1 kHz against Serum's 3.2 kHz at full depth); the pair
+  is now centred between 20 Hz and the knob frequency. The "mono" switch had
+  been mapped onto that same spread parameter (giving a 1 kHz band-pass),
+  which was wrong; it is now only reported.
+* **Reverb.** The gist parameter table mislabels Serum 1's reverb: index 83
+  is DECAY (0.8 .. 12 s), 85 and 87 are SPIN RATE and SPIN DEPTH; the
+  converter had treated 83 as pre-delay and derived the decay from SIZE.
+  Measured with a 0.3 s note (a 30 ms blip does not excite Serum's reverb at
+  larger sizes, and it goes idle after silence): Serum 1's RT60 is a floor
+  set by SIZE (0.9 s at 20 %, 1.1 at 35, 1.8 at 50, 3.2 at 65, 5.3 at 80)
+  overtaken by 2000/(12.5 − decay)³ from about 3 s of decay (2.9 s at 3.6,
+  9.3 at 6.4, runaway at 12); Vital's tail measures 1.45·decay_time·f(size)
+  (f from 1.5 at size 0 to 0.76 at 1), so decay_time is set to reproduce the
+  RT60 at Serum's size. Serum 2: the plate follows SIZE alone (0.4 s at 10 %,
+  3 at 35, 7.9 at 50, saturating at 12 s from 65), Hall has a size floor
+  (3 s to 50 %, 5.5 at 80) overtaken by `kParamDelay` (3 s at 30, 7 at 60,
+  18 at 100, runaway by 150), Vintage follows SIZE alone (0.9 / 1.8 / 6.3 s
+  at 20 / 45 / 80) and ignores that knob, Abyss depends on both; the plate
+  runs 6 dB hotter than the other types. Serum's tail is brighter than
+  Vital's at any setting; HI CUT closes Vital's pre-high-pass as
+  128 − 35·h semitones (−0.8 octave at 80 %), LO CUT opens the pre-low-pass
+  as 30 + 60·l. The wet law needs no extra scale for Serum 1 (sustained
+  level −0.8 / −2.7 / −6 dB at 33 / 50 / 75 % wet on both).
+* **Distortion.** Every Serum mode sits 6 dB below unity at zero drive and
+  the drive law is mode-specific (hard clip's pre-gain is (1 + 4n³)/2; Diode
+  1 clips hard even at zero drive, +5 dB; the folds jump to full effect by
+  25 %; X-Shaper at its default shape is a −6 dB pad). Each mode carries a
+  measured level curve, matched onto Vital's measured drive-to-level curve of
+  the corresponding type (folds on spectral centroid instead); the clipping
+  modes now land within 0.2 dB of Serum at every drive (they were up to 7 dB
+  hot). Serum 2's tube matches the Serum 1 law within 0.4 dB.
+* **Compressor.** Vital's follower time is base_ms·exp(8x − 4) with 1.4 / 28
+  ms bases in single-band mode (compressor.cpp), so Serum's default 90 ms
+  release needs x = 0.65, not the knob position 0.3 (5.6 ms). Vital's
+  follower reads a saw near its peak (−9.5 dBFS for a −17.4 dBFS RMS saw) and
+  Serum's detector about −21.5 dBFS, so thresholds sit 12 dB higher in Vital;
+  with that and band gains starting from 0 dB (the +12 / +16 dB defaults only
+  undo Vital's own default upward compression) the single-band rows match
+  within 1.1 dB at −7.5 / −17.6 / −25.8 / −41.9 dB. The GAIN knob is
+  20·log10(1 + 31n²) dB. Serum's multiband mode is an OTT-style upward and
+  downward compressor (quiet input +3 dB and bright, loud input −8 dB), which
+  is also Vital's design: lower threshold 5 dB under the upper, lower ratio
+  0.8, band trims −1.5 / −3.5 / +1.5 dB, the L/M/H knobs (0 .. 200 %) as
+  33·log10(%) band gain, and a −0.85 dB per dB term below the default
+  threshold because Serum's output falls faster than its threshold.
+* **EQ.** Vital's shelves sit half an octave higher than Serum's and peak
+  with any resonance, so they are shifted −6 semitones at resonance 0; the
+  Q knob maps to Vital resonance through measured tables (peak: 0.6 → 0.8,
+  0.9 → 1.0; pass: 0.6 → 0.7). Peaks and passes now match the octave bands
+  within 0.5 dB, shelves within 2 dB.
+* **Hyper / Dimension, phaser, flanger.** Hyper adds its voices to the dry
+  signal (100 % wet is +2.5 dB and −4.5 dB side); Vital's equal-power chorus
+  reaches that width at about 0.55·wet, Dimension at 0.42·mix, and more than
+  three voice pairs are wider than any Hyper setting. Serum's STEREO 180°
+  measures like a Vital phase offset of 0.02 (phaser) and 0.1 (flanger),
+  and Serum's flanger sits at a fixed ~16 ms base delay (Vital centre note
+  34); with those the flanger's width, correlation and level match, the
+  phaser's within 2 dB.
+* **Serum 2 level.** The Serum 2 path rendered the Init preset 3.0 dB above
+  Serum 2 itself (Serum 2 sits 1.4 dB below Serum 1 at identical settings and
+  the Serum 1 path's 1.6 dB synth offset was missing); corrected at the
+  master.
+
+Result on the 645 listening-set presets (`tools/evaluate.py`, all tiers,
+against the published 0.5.1 metrics in `out/eval/before_fx.json`): median
+distance 13.53 → 12.63, spectral 8.84 → 8.00 dB, envelope correlation
+0.706 → 0.733, |level| 4.25 → 4.22 dB; 324 presets closer, 252 further, 69
+unchanged. Every effect family improved on distance and spectrum (compressor
+presets 14.55 → 13.1, Hyper 14.57 → 14.5, reverb 13.76 → 13.4 on the
+intermediate runs). Two refinements that matched the fixtures were reverted
+because they lost on real presets: folding the multiband wet knob's
+cancellation into gain (it silenced a preset with wet at 0), and cutting the
+reverb decay to the size floor below 3 s of decay. A 16 dB compressor
+threshold offset instead of 12 made no difference. What is left is level:
+Vital now sits about 1.3 dB below Serum on median, 2-3 dB on presets with a
+compressor or Hyper, where the old +12/+16 dB band-gain defaults had been
+masking deficits elsewhere; that is the next measurable item, together with
+the per-effect `FX * Level` trims (not converted) and Serum 2's EQ Q law.
