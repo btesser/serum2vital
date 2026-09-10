@@ -19,6 +19,7 @@ Fidelity notes are recorded in `Conversion.notes` with a prefix:
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass, field
 
 from . import serum1
@@ -96,7 +97,7 @@ WARP_TO_VITAL = {
     "AM (from B)": (10, "same", False),
     "RM (from B)": (10, "same", True),
     "FM (Noise)": (9, "fm", True),
-    "FM (Sub)": (8, "fm", True),
+    "FM (Sub)": (8, "fm_sub", True),
 }
 WARP_UNSUPPORTED = {"Flip", "Mirror", "Remap 1", "Remap 2", "Remap 3", "Remap 4"}
 
@@ -246,6 +247,16 @@ def serum_filter_index(value: float) -> int | None:
     return st.indexed(value, (95, 89, 88))
 
 
+def _interp(x: float, points: list[tuple[float, float]]) -> float:
+    """Piecewise-linear interpolation through sorted (x, y) points, flat outside."""
+    if x <= points[0][0]:
+        return points[0][1]
+    for (x0, y0), (x1, y1) in zip(points, points[1:]):
+        if x <= x1:
+            return y0 + (y1 - y0) * (x - x0) / (x1 - x0)
+    return points[-1][1]
+
+
 def warp_amount(transform: str, amount: float) -> float:
     if transform == "zero":
         return 0.0
@@ -255,6 +266,10 @@ def warp_amount(transform: str, amount: float) -> float:
         return 0.5 - 0.5 * amount
     if transform == "fm":       # Serum's FM index is stronger below the midpoint
         return amount ** 0.8
+    if transform == "fm_sub":   # spectral-centroid match: Serum warp 0.4 = Vital 0.6, 0.6+ beyond Vital's range
+        return min(1.0, 1.5 * amount)
+    if transform == "fm_osc":   # from the other wavetable oscillator: Serum stays gentle below the midpoint
+        return amount ** 1.5
     if transform == "sync":     # Serum's sync sweeps further at the same knob
         return min(1.0, 1.3 * amount)
     return amount
@@ -297,6 +312,11 @@ def route(conv: Conversion, source: str | None, destination: str, amount: float,
         conv.note(f"unsupported: modulation source '{source}' has no Vital counterpart; routing dropped")
         return
     bipolar = vital_source in BIPOLAR_SOURCES
+    if re.match(r"lfo_\d+_(tempo|frequency)$", destination):
+        # Serum's rate knob spans about 8 octaves; Vital's tempo list is 12
+        # steps of one octave with "freeze" at 0, so a full-range Serum amount
+        # would park the LFO at freeze (holding its first value) half the time.
+        amount *= CALIB["lfo_rate_mod_scale"]
     vital_aux = SOURCE_TO_VITAL.get(aux) if aux else None
     if aux and vital_aux is None:
         conv.note(f"approximation: aux source '{aux}' has no Vital counterpart; routing applied without it")
@@ -387,6 +407,27 @@ def _display(patch: serum1.Serum1Patch, name: str) -> float:
 UNISON_TUNING_TO_POWER = {"Linear": 0.0, "Super": 0.0, "Exp": 1.5, "Inv": -2.0, "Random": 0.0}
 
 
+# Serum's unison stack changes the oscillator's level with the voice count
+# (Vital's stays flat).  Measured twice on the init saw at default detune and
+# blend, relative to one voice; intermediate counts are interpolated.
+# Calibration switches, mainly so tools/evaluate.py can ablate one change at a time.
+CALIB = {"drive_residual": False, "sub_linear": True, "unison_gain": False,
+         "lfo_invert": False, "lfo_wrap": True, "lfo_power_flip": False, "comp_excess_scale": 0.5,
+         "lfo_rate_mod_scale": 1.0}
+
+UNISON_GAIN_DB = {1: 0.0, 2: -1.9, 3: -3.6, 4: -0.6, 5: -1.5, 6: 0.2, 7: -0.3, 8: 0.9, 10: 1.25, 12: 1.5, 16: 1.4}
+
+
+def unison_gain_db(voices: int) -> float:
+    voices = max(1, min(16, int(voices)))
+    if voices in UNISON_GAIN_DB:
+        return UNISON_GAIN_DB[voices]
+    lower = max(v for v in UNISON_GAIN_DB if v < voices)
+    upper = min(v for v in UNISON_GAIN_DB if v > voices)
+    t = (voices - lower) / (upper - lower)
+    return UNISON_GAIN_DB[lower] + t * (UNISON_GAIN_DB[upper] - UNISON_GAIN_DB[lower])
+
+
 def serum_phase_to_vital(phase: float) -> float:
     """Serum oscillator phase (0..1 of a cycle) -> Vital's phase parameter.
 
@@ -407,8 +448,12 @@ def _osc_from_serum1(conv: Conversion, patch: serum1.Serum1Patch, letter: str, s
     if not on:
         return
 
-    # Serum's Vol knob is quadratic in amplitude, and so is Vital's level.
-    conv.set(f"{prefix}_level", _p(patch, f"{letter} Vol"))
+    # Serum's Vol knob is quadratic in amplitude, and so is Vital's level; the
+    # unison stack's measured level change is folded in as a gain (dB / 40
+    # because the level is an amplitude squared).
+    voices = max(1, round(_display(patch, f"{letter} Unison")))
+    gain_db = unison_gain_db(voices) if CALIB["unison_gain"] else 0.0
+    conv.set(f"{prefix}_level", min(1.0, _p(patch, f"{letter} Vol") * 10 ** (gain_db / 40.0)))
     conv.set(f"{prefix}_pan", _display(patch, f"{letter} Pan") / 50.0)
 
     octave = round(_display(patch, f"{letter} Octave"))
@@ -528,7 +573,10 @@ def _lfos_from_serum1(conv: Conversion, patch: serum1.Serum1Patch) -> None:
         shape = patch.lfo_shapes[slot - 1] if slot - 1 < len(patch.lfo_shapes) else None
         if shape is None:
             continue
-        conv.lfos[slot - 1] = lfo_to_vital(shape, name=f"Serum LFO {slot}") if len(shape.xs) >= 2 else None
+        conv.lfos[slot - 1] = lfo_to_vital(
+            shape, name=f"Serum LFO {slot}", invert_y=CALIB["lfo_invert"], close_loop=CALIB["lfo_wrap"],
+            power_sign=-1.0 if CALIB["lfo_power_flip"] else 1.0,
+        ) if len(shape.xs) >= 2 else None
         apply_lfo_settings(conv, slot, shape.settings, _p(patch, f"LFO{slot}Rate"), used=f"lfo_{slot}" in used)
 
         smooth = _p(patch, f"LFO{slot} smooth")
@@ -678,13 +726,25 @@ def _effects_from_serum1(conv: Conversion, patch: serum1.Serum1Patch) -> None:
         makeup = 30.0 * _p(patch, "CmpGain") ** 0.7
         multiband = _p(patch, "CmpMBnd") > 0.5
         conv.set("compressor_enabled_bands", 0.0 if multiband else 3.0)
+        # Vital's default band gains restore the reduction its compressor
+        # applies at its own default threshold; as the threshold rises the
+        # reduction shrinks but the gain stays, so Vital ends up louder than
+        # Serum.  Measured (crafted presets, saw at -17 dBFS, makeup 0):
+        # Vital - Serum = +0.2 dB at -36 dB, +1.5 dB at -18 dB, +7.3 dB at
+        # -7.5 dB threshold; Serum's multiband mode sits another 10.5 dB lower.
+        excess = _interp(threshold, [(-36.2, 0.2), (-18.1, 1.5), (-7.5, 7.3)])
+        if multiband:
+            excess += 10.5
+        # The grid used a -17 dBFS saw; louder programme material is compressed
+        # more by Vital, which eats part of the excess, so half of it is applied.
+        excess *= CALIB["comp_excess_scale"]
         for band in ("low", "band", "high"):
             conv.set(f"compressor_{band}_upper_threshold", max(-80.0, threshold))
             conv.set(f"compressor_{band}_upper_ratio", max(0.0, min(1.0, ratio)))
             conv.set(f"compressor_{band}_lower_threshold", -80.0)   # no upward compression in Serum
             conv.set(f"compressor_{band}_lower_ratio", 0.0)
             # Vital's default band gains are its unity reference; add Serum's makeup on top.
-            conv.set(f"compressor_{band}_gain", DEFAULTS[f"compressor_{band}_gain"] + makeup - 3.5)
+            conv.set(f"compressor_{band}_gain", max(-30.0, min(30.0, DEFAULTS[f"compressor_{band}_gain"] + makeup - 3.5 - excess)))
         conv.note("approximation: compressor threshold/ratio/makeup mapped onto Vital's multiband compressor")
 
     # --- EQ ---
@@ -897,7 +957,11 @@ def convert_serum1(patch: serum1.Serum1Patch) -> Conversion:
     if _p(patch, "Filter On") > 0.5 and _p(patch, "Fil Driv") > 0.0 and (
         _p(patch, "OscA>Fil") > 0.5 or _p(patch, "OscB>Fil") > 0.5 or _p(patch, "OscS>Fil") > 0.5
     ):
-        drive_gain = 12.0 * _p(patch, "Fil Driv")   # half the measured gain: full compensation overshoots on closed filters
+        # Measured on a cutoff x drive grid (MG Low 12/24): with 12 dB*n at the
+        # master Vital still came out 1.9 / 3.4 / 4.3 dB quieter than Serum at
+        # drive 25 / 50 / 100%, so that residual is added on top.
+        drive = _p(patch, "Fil Driv")
+        drive_gain = 12.0 * drive + (4.4 * drive ** 0.6 if CALIB["drive_residual"] else 0.0)
         if -6.02 + master_db + drive_gain > 6.0:
             conv.note("approximation: filter drive gain exceeds Vital's headroom; master clamped at +6 dB")
         master_db += drive_gain
@@ -910,7 +974,11 @@ def convert_serum1(patch: serum1.Serum1Patch) -> Conversion:
     sub_on = _p(patch, "Osc S On") > 0.5
     conv.set("osc_3_on", 1.0 if sub_on else 0.0)
     if sub_on:
-        conv.set("osc_3_level", _p(patch, "Sub Osc Level"))
+        # Measured against Serum: the sub's level knob is linear in amplitude
+        # (A/B Vol and Vital's level are quadratic) and its full scale sits
+        # 3.7 dB below Vital's osc 3 playing sin.wav at level 1.
+        sub_level = _p(patch, "Sub Osc Level")
+        conv.set("osc_3_level", math.sqrt(sub_level) * 10 ** (-3.7 / 40) if CALIB["sub_linear"] else sub_level)
         conv.set("osc_3_pan", _display(patch, "Sub Osc Pan") / 50.0)
         conv.set("osc_3_transpose", 12 * round(_display(patch, "SubOscOctave")))
         conv.set("osc_3_destination", 0.0 if _p(patch, "OscS>Fil") > 0.5 else 3.0)
@@ -931,8 +999,17 @@ def convert_serum1(patch: serum1.Serum1Patch) -> Conversion:
         conv.set("sample_random_phase", 1.0 if _p(patch, "Noise RandPhase") > 0.5 else 0.0)
         conv.set("sample_keytrack", 1.0 if patch.settings.noise_pitch_track else 0.0)
         conv.set("sample_destination", 0.0 if _p(patch, "OscN>Fil") > 0.5 else 3.0)
-        # Serum's noise pitch knob spans +-48 semitones around the centre (approx).
-        conv.set("sample_transpose", round((_p(patch, "Noise Pitch") - 0.5) * 96.0))
+        # Serum's noise pitch knob: +48 semitones at the top (centroids and
+        # levels match Vital's sample transpose at 60/75/100%), but below the
+        # centre the playback rate collapses much faster, about 100*log2(2v)
+        # semitones (-35 st at 40%, -100 st at 25%), so Vital's -48 floor is
+        # reached below 36%.
+        pitch = _p(patch, "Noise Pitch")
+        if pitch >= 0.5:
+            semis = (pitch - 0.5) * 96.0
+        else:
+            semis = max(-48.0, 100.0 * math.log2(max(2.0 * pitch, 1e-3)))
+        conv.set("sample_transpose", round(semis))
         conv.set("sample_tune", _display(patch, "Noise Fine"))
 
     _filter_from_serum1(conv, patch)

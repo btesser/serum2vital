@@ -9,7 +9,8 @@ Serum table would otherwise add ~2.8 MB of base64 to every preset.
 
 Serum LFO curves and Vital LFO curves are both point lists with a per-segment
 tension, so those map across directly too; the only real work is Serum's
-screen-space y axis (0 at the top) versus Vital's (1 at the top).
+screen-space y axis (0 at the top), which Vital's LFO JSON shares (measured:
+a curve held at 0 drives a level modulation to its maximum).
 """
 
 from __future__ import annotations
@@ -295,13 +296,28 @@ def sample_to_vital(path: str | Path, name: str | None = None, max_seconds: floa
     return data
 
 
-def lfo_to_vital(shape, name: str = "Serum") -> dict:
+def lfo_to_vital(shape, name: str = "Serum", invert_y: bool = True, close_loop: bool = False,
+                 power_sign: float = 1.0) -> dict:
     """Convert a :class:`serum1.LfoShape` into Vital's LFO curve object.
 
-    Vital stores ``points`` as a flat [x0, y0, x1, y1, ...] list with y = 1 at
-    the top, and one ``power`` per point (0 = straight segment).
+    Vital stores ``points`` as a flat [x0, y0, x1, y1, ...] list with y = 0 at
+    the top (measured: a curve held at 0 drives a level modulation to its
+    maximum), and one ``power`` per point (0 = straight segment).
+
+    ``invert_y`` flips the stored y for a format whose axis points the other
+    way; ``close_loop`` replaces the final point's value with the first point's,
+    for an editor that ties the two ends together.  For Serum 1 both were
+    settled by rendering LFO-to-level routings through the plugin: Serum's y
+    has the same orientation as Vital's (no inversion) and the loop closes, so
+    the default shape (0,0)-(0.5,1)-(1,1) plays as a triangle.
     """
     xs, ys, curves = list(shape.xs), list(shape.ys), list(shape.curves)
+    if close_loop and len(ys) >= 3:
+        closed = ys[:-1] + [ys[0]]
+        # A flat curve (all points equal) makes Vital's voice collapse even when
+        # the LFO is not routed anywhere, so never produce one.
+        if max(closed) - min(closed) > 1e-3:
+            ys = closed
     if len(xs) < 2:
         # Fall back to Vital's own default triangle.
         return {
@@ -315,12 +331,12 @@ def lfo_to_vital(shape, name: str = "Serum") -> dict:
     points: list[float] = []
     for x, y in zip(xs, ys):
         points.append(max(0.0, min(1.0, x)))
-        points.append(max(0.0, min(1.0, 1.0 - y)))  # Serum's y axis runs downwards
+        points.append(max(0.0, min(1.0, 1.0 - y if invert_y else y)))
 
     powers = []
     for i in range(len(xs)):
         curve = curves[i] if i < len(curves) else 0.5
-        powers.append(max(-20.0, min(20.0, (curve - 0.5) * 2.0 * LFO_POWER_SCALE)))
+        powers.append(max(-20.0, min(20.0, power_sign * (curve - 0.5) * 2.0 * LFO_POWER_SCALE)))
 
     return {
         "name": name,

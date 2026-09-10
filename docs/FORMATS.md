@@ -239,9 +239,13 @@ x, 8-11 are y.  LFO 1-4 start at `0x0280`, LFO 5-8 at `0x1B70`.
 
 * x runs 0..1 left to right; the shape ends at the first point that reaches 1.0
   and the rest of the array is padding.
-* y runs 0..1 **top to bottom** (screen coordinates), so Vital's y is `1 − y`.
-  The last point's own y is used (the default shape is a half-saw: top, bottom
-  at 50%, then flat), there is no wrap to the first point.
+* y runs 0..1 **top to bottom** (screen coordinates), the same orientation
+  as Vital's LFO JSON, so the value is copied as is. Serum ties the curve's
+  last point to its first, so the default shape (0, 1, 1) plays as a triangle;
+  the converter closes the loop the same way. Both facts were settled on
+  2026-09-10 by rendering LFO-to-level routings through Serum and fitting
+  polarity and loop closure against Vital renders (0.99 correlation); the
+  earlier reading (invert, no loop) anti-correlated at −0.44.
 * tension is 0..1 with 0.5 meaning a straight segment.
 
 The LFO 1-4 switches live in a 144-byte record at `0x1AE0`:
@@ -464,7 +468,9 @@ Things worth knowing when writing a preset:
 * **Samples** are base64 of int16 PCM, mono in `samples` and optionally
   `samples_stereo`.
 * **LFOs** are `{name, num_points, points: [x0,y0,x1,y1,...], powers, smooth}`
-  with y = 1 at the top and power 0 meaning a straight segment.
+  with **y = 0 at the top** (a curve held at 0 drives a level modulation to
+  its maximum, one held at 1 to silence; measured through the plugin) and
+  power 0 meaning a straight segment.
 * **`settings["sample"]` must exist.** `LoadSave::jsonToState` reads it without
   a guard and then indexes `["length"]`, so a preset without one fails to load.
 * **`synth_version` is checked.** A preset whose feature version is newer than

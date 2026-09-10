@@ -395,3 +395,58 @@ On a random 16-preset A/B batch, 9 presets now land within 3 dB of Serum's
 sustained level; the outliers are heavy-drive patches (still up to +9 dB) and
 decaying plucks (up to −17 dB), which is where remaining tuning would go.
 
+### Second pass (2026-09-10), driven by the listening analysis
+
+Test set: the 89 factory presets whose only conversion notes are the
+constant ones (tools/evaluate.py, tiers clean + common-fx, same 7.5 s phrase
+as the listening pages). Distance = mean |dB| over 1/6-octave bands + |level
+offset|. Baseline: median distance 12.30, spectral 8.26 dB, |level| 3.95 dB,
+envelope correlation 0.609.
+
+* **LFO polarity and loop.** LFO-to-level routings rendered through Serum in
+  every mode anti-correlated with the converted Vital envelopes (−0.44 on
+  the default shape). Fitting polarity, loop closure and sync mode against
+  the Serum envelopes: the stored y is the LFO value as is (0 = minimum), and
+  the last point is tied to the first, so the default shape is a triangle
+  (0.99 correlation once applied). Result: envelope correlation 0.60 → 0.72,
+  median distance 12.30 → 11.37, 33 presets better / 15 worse. Flipping the
+  curvature sign as well was tried and rejected (7 better / 14 worse).
+  Serum 2's LFO axis was not re-measured (no headless host) and keeps the
+  previous convention.
+* **Flat LFO curves break Vital.** A curve whose points all share one value
+  makes Vital's voice nearly silent even when the LFO is not routed; the
+  writer never emits one.
+* **Sub level law.** Serum's sub level knob is linear in amplitude (A/B Vol
+  and Vital's level are quadratic) and its full scale is 3.7 dB below Vital's
+  osc 3 on sin.wav; |level| 3.95 → 3.68 dB on the test set.
+* **Noise pitch.** Above the centre the knob is +48 semitones at 100% and
+  Vital's sample transpose matches it within 100 Hz of centroid and 0.1 dB;
+  below the centre Serum's playback rate collapses about as 100·log2(2v)
+  semitones (−35 st at 40%, −100 st at 25%), so Vital's −48 floor is reached
+  below 36%.
+* **FM from the sub.** Both synths modulate with the sub regardless of its
+  level, but Serum's index grows faster: warp 0.4 matches Vital amount 0.6 and
+  0.6 already exceeds Vital's range (centroid 9.5 kHz vs 8.7 kHz at Vital's
+  maximum). Mapped as 1.5× the warp, capped. FM from oscillator B measured
+  too noisily to change.
+* **Tried and rejected by the evaluation:** a unison-count gain table (Serum
+  −1.9 dB at 2 voices, −3.6 at 3, +1.5 at 12; reproducible on the init saw but
+  16 better / 22 worse on real presets, |level| 3.95 → 4.48), and an extra
+  filter-drive compensation (the drive grid showed Vital 2–4 dB quieter, but
+  10 better / 12 worse on presets).
+* **Compressor.** With crafted presets the compressor can now be engaged in
+  Serum. Serum's compressor changes level little (−0.4 dB at the default
+  threshold on a −17 dBFS saw, 0 at −7.5 dB, −11 at −36 dB), whereas Vital's
+  keeps its default +12.8 dB band gains as the compression falls away, so
+  Vital runs +7.3 dB hot at a −7.5 dB threshold and +1.5 dB at −18 dB;
+  multiband mode is another +10.5 dB hot. Makeup gain tracks within 1 dB.
+  The full correction over-shot on real presets (signed level +1.5 → −1.6 dB,
+  median distance worse), because louder programme material is compressed
+  more by Vital; see the changelog for the fraction finally applied.
+* **What did not move:** noise level (matches within 0.02 dB), master volume
+  and A/B Vol (within 0.2 dB), filters at zero drive (within 0.5 dB except the
+  top of the cutoff range, where Vital's ladder is 2–4 dB down), resonance
+  (Vital's ladder loses passband gain at high resonance where Serum's gains
+  it: −11.6 dB at 90% resonance and 35% cutoff), EQ (±3 dB, shelf laws
+  differ). These are the next measurable items.
+

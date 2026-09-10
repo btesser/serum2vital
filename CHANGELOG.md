@@ -2,6 +2,31 @@
 
 ## Unreleased
 
+* Serum 1 LFO shapes were upside down. Rendering LFO-to-level routings through
+  both plugins showed that Serum's stored y and Vital's LFO JSON share the
+  same orientation (0 at the top), so the converter's inversion flipped every
+  LFO, and that Serum ties the curve's last point to its first (the default
+  shape plays as a triangle). Flat curves are avoided because Vital's voice
+  collapses on them even when the LFO is unused. On the 89 factory presets
+  without real approximations the loudness-envelope correlation went from 0.60
+  to 0.72 and the median distance from 12.3 to 11.4; over all 599 scored
+  factory presets the median distance went from 14.7 to 13.8 and the presets
+  within 6 of their original from 44 to 55.
+* Serum 1 levels measured against the plugin: the sub oscillator's level knob
+  is linear in amplitude and 3.7 dB below Vital's sine; the noise Pitch knob
+  drops about 100·log2(2v) semitones below its centre; FM from the sub needs
+  1.5× the warp amount in Vital. A unison-count gain table and an extra
+  filter-drive compensation were measured, tried and rejected by the same
+  evaluation (they made the level spread worse).
+* Serum 1 compressor: crafted presets finally let Serum's compressor be
+  measured. Serum barely changes level as the threshold rises while Vital
+  keeps its default band gains, leaving Vital up to +7 dB hot at high
+  thresholds and +10.5 dB hot in multiband mode; half of that measured excess
+  is now taken out of the band gains (the full amount over-corrected on real
+  presets), which centres the library's level bias (+1.5 dB → +0.2 dB).
+* `tools/evaluate.py`: converts a tier of presets in-process, renders Vital and
+  scores against the Serum clips in about a minute, with `--calib` switches to
+  ablate individual mapping changes.
 * Listening site: every preset now shows its conversion notes (with kind
   badges) and its closeness metrics against the Serum render; pages filter by
   note kind, note family and tier, and sort by distance. `tools/analyze_listen.py`
