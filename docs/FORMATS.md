@@ -40,7 +40,6 @@ the preset embeds.
 | `0x0280` | LFO 1–4 shape block (12 arrays × 65 float64, stride 520) — classic layout only |
 | `0x1AE0` | LFO 1–4 switches (see below) |
 | `0x1B70` | LFO 5–8 shape block — classic layout only |
-| `0x33D0` | LFO 5–8 switches: only the ANCH bytes are recognisable — classic layout only |
 | `0x3460` | parameters 0–227, float32 normalised 0..1 |
 | `0x3BE0` | FX rack order (10 × int32, see below) |
 | `0x3C08` | oscillator A wavetable name (512-byte NUL-terminated) |
@@ -52,6 +51,7 @@ the preset embeds.
 | `0x4A60` | macro 1–4 names, 0x20 apart |
 | `0x4AE0` | parameters 228–298 |
 | varies | global switches block (see below): `0x4C48` in current builds, `0x4C44` and `0x4B9C` in older ones |
+| `0x6DB8` | LFO 5–8 switches, same 144-byte layout as the LFO 1–4 record — classic layout only, blobs of 28,232 bytes and up |
 | `0x84D8` | LFO 1–8 blocks, 0x2D28 bytes each — new layout only |
 | varies | modulation slots 17–32 |
 
@@ -273,10 +273,20 @@ The LFO 1-4 switches live in a 144-byte record at `0x1AE0`:
 | +0x24 | uint8 × 4: mode is not OFF |
 | +0x28 | uint8 × 4: mode is ENV (with the previous byte set) |
 
-Mode therefore decodes as OFF (0,0), TRIG (1,0), ENV (1,1).  For LFO 5-8 only
-the anchor bytes at `0x33D0` are recognisable; the rest of that record is
-uninitialised in most files, so those four LFOs are assumed synced and
-free-running and the converter says so when they are used.
+Mode therefore decodes as OFF (0,0), TRIG (1,0), ENV (1,1).  The LFO 5-8
+record has the same layout at `0x6DB8` (point counts, rate copies of
+parameters 260-263, then the six flag groups).  It was located on 2026-09-10
+by re-saving 319 classic presets through the current build, whose state is
+written in the new layout with all eight LFOs' flags, and correlating those
+flags against the old bytes: every LFO 5-8 flag matches a single byte in that
+record and nothing else (the bytes after the ANCH-looking `0x33D0` run are
+heap junk, DAW strings included, and do not track the plugin).  Crafted
+single-flag fixtures (`tools/lfo58_fixtures.py`) read back through the plugin
+confirm all six flags for LFO 5 and 6, plus Hz on LFO 7 and triplet on LFO 8.
+Blobs shorter than the record (20,704-21,808 bytes, builds before LFO 5-8
+existed) carry no switches; Serum loads those LFOs at their defaults
+(anchored, BPM synced, mode OFF), the reader returns the same and marks them
+`known=False`, and the converter notes it when such an LFO is used.
 
 **New layout** (172,736-byte blobs, current builds): the classic region is
 zero and eight LFO blocks of `0x2D28` bytes start at `0x84D8`:
@@ -424,7 +434,7 @@ fixtures that would settle the items marked *fixture*.
 | Global switches block fields +0x04, +0x30, +0x4C, +0x58, +0x60 | not read; none of them changes the rendered audio in any scenario (see the switches-block section), so they are taken to be GUI-only state | *fixture*: only worth it if a GUI control is found whose state is not covered elsewhere; +0x60 is probably a display zoom (its users edit envelope curves) |
 | Chorus switch at +0x48: its GUI label | read and reported (its measured effect, an in-phase L/R chorus LFO, has no Vital counterpart; Vital's `chorus_spread` is the chorus *filter* spread, which the earlier mapping had set to 0) | a look at Serum's chorus panel |
 | Per-effect output trims `FX * Level` (parameters 289-298) | read, not converted | nothing to settle; a Vital effect has no output trim |
-| LFO 5–8 switches in the classic layout | confirmed absent: the record at 0x33D0 holds only the four ANCH bytes, then zeros or heap junk, in every one of the 611 classic-layout presets that route LFO 5–8; those builds did not save the switches, so "synced, free-running" is the only possible reading | nothing to settle |
+| LFO 5–8 switches in the classic layout | resolved 2026-09-10: they live in a second 144-byte record at 0x6DB8 (28 KB blobs and up), same layout as the LFO 1–4 record; the earlier "confirmed absent" reading came from looking at 0x33D0, which is junk. Reader matches the plugin's read-back on all 319 classic presets that use them; shorter blobs predate LFO 5–8 and are loaded at Serum's defaults | nothing to settle |
 | `Mast.Tun` parameter (index 80) range | measured at (v − 0.5) × 128 semitones on two points (±0.1 → ±12.8 st); never non-default in the 15k-preset library, so it is not converted statically | a third point with a wider pitch tracker if ever needed |
 | Second zlib stream in the chunk (16 KB, identical in every preset) and the uint32 before the length word | preserved verbatim by `tools/craft_fxp.py` | not needed |
 | New-layout LFO block +0x0000 (one float64 before the tension array; 0 in most files, 0.2–0.3 in a few LFO 1 blocks) | not read; no audible effect found | nothing to settle unless a shape mismatch points at it |

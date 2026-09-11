@@ -284,7 +284,8 @@ def apply_lfo_settings(conv: Conversion, slot: int, settings: serum1.LfoSettings
                        what: str = "LFO", used: bool = True) -> None:
     """Set Vital's sync mode, tempo/frequency and trigger type for one LFO."""
     if not settings.known and used:
-        conv.note(f"unknown: {what} {slot} sync/trigger switches could not be read; assumed synced, retriggered")
+        conv.note(f"unknown: {what} {slot} sync/trigger switches are not stored in this preset; "
+                  "loaded as Serum does (BPM synced, free-running, anchored)")
     conv.lfo_hz_mode[slot - 1] = settings.hz_mode
     if settings.hz_mode:
         conv.set(f"lfo_{slot}_sync", SYNC_SECONDS)

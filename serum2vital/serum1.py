@@ -77,8 +77,9 @@ CLASSIC_BLOCKS = (0x0280, 0x1B70)          # LFO 1-4, LFO 5-8 shape blocks
 CLASSIC_ARRAY_STRIDE = 520                 # 65 float64
 CLASSIC_ARRAY_LEN = 65
 CLASSIC_SETTINGS = 0x1AE0                  # LFO 1-4 settings record
+CLASSIC_SETTINGS_5_8 = 0x6DB8              # LFO 5-8 settings record, same layout (28 KB blobs and up)
 CLASSIC_SETTINGS_FLAGS = 0x14              # six groups of 4 bytes from here
-CLASSIC_SETTINGS_5_8 = 0x33D0              # LFO 5-8: anchor bytes only
+CLASSIC_SETTINGS_END = 0x2C                # end of the flag groups
 
 # New LFO layout.
 NEW_LFO_BASE = 0x84D8
@@ -343,21 +344,28 @@ def _read_classic_shape(blob: bytes, block: int, lfo: int, settings: LfoSettings
 
 
 def _read_classic_settings(blob: bytes) -> list[LfoSettings]:
-    """Per-LFO switches for the classic layout (LFO 1-4 fully, 5-8 anchor only)."""
+    """Per-LFO switches for the classic layout.
+
+    Two records of the same layout: LFO 1-4 at 0x1AE0 and LFO 5-8 at 0x6DB8
+    (found by re-saving 319 classic presets through the current build and
+    correlating the eight LFOs' flags against the old bytes; confirmed with
+    crafted single-flag fixtures, tools/lfo58_fixtures.py).  Blobs from
+    builds that predate LFO 5-8 (under 28 KB) end before the second record;
+    Serum loads those LFOs at their defaults (anchored, BPM synced, mode OFF),
+    which is what the reader returns, marked as not read from the file.
+    """
     out: list[LfoSettings] = []
-    base = CLASSIC_SETTINGS + CLASSIC_SETTINGS_FLAGS
-    for i in range(4):
-        if base + 0x18 > len(blob):
-            out.append(LfoSettings(known=False))
-            continue
-        flags = [blob[base + 4 * k + i] for k in range(6)]
-        if all(f in (0, 1) for f in flags):
-            out.append(LfoSettings.from_flags(flags))
-        else:
-            out.append(LfoSettings(known=False))
-    for i in range(4):
-        anchor = blob[CLASSIC_SETTINGS_5_8 + i] if CLASSIC_SETTINGS_5_8 + 4 <= len(blob) else 1
-        out.append(LfoSettings(anchor=anchor == 1, mode="off", known=False))
+    for record in (CLASSIC_SETTINGS, CLASSIC_SETTINGS_5_8):
+        base = record + CLASSIC_SETTINGS_FLAGS
+        for i in range(4):
+            if record + CLASSIC_SETTINGS_END > len(blob):
+                out.append(LfoSettings(known=False))
+                continue
+            flags = [blob[base + 4 * k + i] for k in range(6)]
+            if all(f in (0, 1) for f in flags):
+                out.append(LfoSettings.from_flags(flags))
+            else:
+                out.append(LfoSettings(known=False))
     return out
 
 

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "serum2vital"
-version = "0.6.0"
+version = "0.6.1"
 description = "Convert Xfer Serum 1 (.fxp) and Serum 2 (.SerumPreset) presets into Vital (.vital) presets, wavetables and modulation included"
 readme = "README.md"
 license = { text = "GPL-3.0-or-later" }

@@ -1,5 +1,29 @@
 # Changelog
 
+## 0.6.1 (2026-09-11)
+
+* Serum 1 classic layout: the LFO 5–8 switches (ANCH, BPM off, DOT, TRIP,
+  TRIG/ENV mode) are now read from their record at `0x6DB8`, a second copy of
+  the LFO 1–4 record. It was found by re-saving 319 classic presets through
+  the current Serum build and correlating the plugin's flags with the old
+  bytes, and confirmed with crafted single-flag fixtures read back through
+  the plugin (`tools/lfo58_fixtures.py`; the reader agrees with the plugin on
+  all 319 × 8 LFOs). Before this the reader took the junk after `0x33D0` for
+  the record and treated every LFO 5–8 as synced and free-running, which
+  mis-set 141 presets (BPM-off, envelope and trigger modes lost). Blobs from
+  builds before LFO 5–8 existed (under 28 KB) still get Serum's defaults and
+  the note now says so instead of "could not be read".
+  Checked two ways: a crafted Init preset with LFO 1 driving oscillator level
+  at 1 Hz renders within 0.2 dB per 100 ms of Serum in Vital for TRIG, ENV
+  and free-running modes (so the mode mapping itself is right), and the 126
+  corrected library presets rendered as a listening set move both ways on the
+  distance metric (18 closer, 25 further, 83 unchanged; median 12.15 → 12.40,
+  spectral 8.34 → 8.19 dB), with the one-shot ENV drums and screeches gaining
+  the most (DR Snare 1 15.5 → 8.5, SY Screech 1 15.2 → 10.6) and the losses on
+  heavily compressed hardstyle presets where the corrected LFO now drives the
+  multiband compressor and distortion mix through laws that were already
+  approximate.
+
 ## 0.6.0 (2026-09-10)
 
 * Effect fixtures. `tools/fx_fixtures.py` crafts 477 single-purpose presets

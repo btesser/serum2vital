@@ -114,8 +114,10 @@ at 0x1AE0 for LFO 1-4, laid out as four-byte groups (one byte per LFO):
 | +0x50 | int32 65 ×4 | grid or array length |
 
 LFO 5-8 shapes start at 0x1B70 (12 arrays × 65 float64, 520-byte stride). Their
-settings record is not the same layout at 0x33D0 and is still open. *(Still
-true: the reader only uses the anchor bytes at 0x33D0 for LFO 5-8.)*
+settings record is not at 0x33D0 (junk). *(Resolved 2026-09-10: it is a second
+record of the same layout at 0x6DB8, present in blobs of 28,232 bytes and up;
+located by correlating the plugin's re-saved state against the old bytes and
+confirmed with crafted single-flag fixtures, `tools/lfo58_fixtures.py`.)*
 
 **FX rack order**: ten int32 at 0x3BE0, one per effect in enable-parameter order
 (Dist, Flg, Phs, Cho, Dly, Comp, Rev, EQ, Filter, Hyper), value = rack position.

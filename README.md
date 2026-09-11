@@ -179,8 +179,9 @@ positions.  The CLI report groups its notes into `approximation`, `conflict`,
 
 - Serum 2 granular/spectral/multisample engines, arpeggiator, clips, MPE
   per-note settings, macros 5–8 and LFOs 9–10
-- the LFO 5–8 sync switches in presets from old Serum builds (assumed synced
-  and free-running; only reported when those LFOs are used)
+- the LFO 5–8 sync switches in presets from Serum builds that predate
+  LFO 5–8 (loaded as Serum does: synced and free-running; only reported when
+  those LFOs are used)
 - Serum 1's Note-on Alt, Noise-osc and Fixed modulation sources; Serum 2's
   audio-rate (oscillator/filter) and voice-bookkeeping sources
 - the reverb's Plate mode (Vital's reverb has no plate); reported
