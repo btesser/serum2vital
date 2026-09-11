@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## 0.6.0 (2026-09-10)
 
 * Effect fixtures. `tools/fx_fixtures.py` crafts 477 single-purpose presets
   (Serum 1 from `00 init.fxp` via `tools/craft_fxp.py`, Serum 2 from
