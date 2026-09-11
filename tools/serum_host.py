@@ -25,6 +25,7 @@ import numpy as np
 import os
 
 SERUM_VST2 = os.environ.get("SERUM_VST2", "C:/Program Files/VstPlugins/Serum_x64.dll")
+SETTLE_SECONDS = 0.5   # silent render after a preset load (see SerumHost.load_preset)
 
 
 class SerumHost:
@@ -49,8 +50,27 @@ class SerumHost:
         return self
 
     # -- presets ----------------------------------------------------------- #
-    def load_preset(self, fxp: str | Path) -> bool:
-        return bool(self.plugin.load_preset(str(fxp)))
+    def load_preset(self, fxp: str | Path, settle_seconds: float = SETTLE_SECONDS) -> bool:
+        """Load an .fxp and let the plugin settle before anything is rendered.
+
+        Serum smooths its parameters across a preset change, so a render made
+        straight after loading carries the previous preset's levels gliding
+        into the new ones for about half a second (measured: a preset whose
+        note sits at -15 dB starts at -2 dB after another preset, -24 dB
+        after Init; a second load of the same file does not help, half a
+        second of silent rendering does).  Every reference render used to
+        carry that onset; `settle` clears it.
+        """
+        ok = bool(self.plugin.load_preset(str(fxp)))
+        if ok and settle_seconds > 0:
+            self.settle(settle_seconds)
+        return ok
+
+    def settle(self, seconds: float = SETTLE_SECONDS) -> None:
+        """Render `seconds` of silence so parameter smoothing reaches the loaded values."""
+        self.plugin.clear_midi()
+        self.engine.load_graph([(self.plugin, [])])
+        self.engine.render(float(seconds))
 
     # -- parameters -------------------------------------------------------- #
     @property

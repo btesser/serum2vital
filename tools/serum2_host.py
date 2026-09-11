@@ -37,6 +37,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from vital_host import decode_juce_base64, encode_juce_base64  # noqa: E402
 
 SERUM2_VST3 = os.environ.get("SERUM2_VST3", "C:/Program Files/Common Files/VST3/Serum2.vst3")
+SETTLE_SECONDS = 0.5   # silent render after a preset load (see load_preset)
 
 MAGIC = b"XferJson\x00"
 ENCODING_ZSTD = 2
@@ -175,13 +176,29 @@ class Serum2Host:
         """Back to the state the plugin had right after loading (Init)."""
         self.set_state(self._template)
 
-    def load_preset(self, path: str | Path) -> bool:
-        """Load a .SerumPreset; True when Serum's read-back reflects it."""
+    def load_preset(self, path: str | Path, settle_seconds: float = SETTLE_SECONDS) -> bool:
+        """Load a .SerumPreset; True when Serum's read-back reflects it.
+
+        Ends with a short silent render, as SerumHost.load_preset does: Serum 1
+        glides its parameters from the previous preset for about half a second
+        after a load and every reference render used to start inside that
+        glide.  Serum 2 showed only about 1 dB of onset difference in the same
+        test, but the settle is kept on both hosts so a reference never
+        depends on what was loaded before it.
+        """
         raw = Path(path).read_bytes()
         meta, doc = parse_xfer(raw)
         self.set_state(state_from_preset(self._template, doc, meta))
         back = self.controller_doc()
+        if settle_seconds > 0:
+            self.settle(settle_seconds)
         return back.get("presetName") == meta.get("presetName", "")
+
+    def settle(self, seconds: float = SETTLE_SECONDS) -> None:
+        """Render `seconds` of silence so the loaded state is fully in effect."""
+        self.plugin.clear_midi()
+        self.engine.load_graph([(self.plugin, [])])
+        self.engine.render(float(seconds))
 
     def processor_doc(self) -> dict:
         """Serum's own processor state (CBOR map: module -> {plainParams: ...})."""

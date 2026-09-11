@@ -1,5 +1,28 @@
 # Changelog
 
+## Unreleased
+
+* Headless Serum renders no longer depend on the preset loaded before them.
+  Serum smooths its parameters across a preset change, so a render made
+  straight after `load_preset` carried the previous preset's levels gliding
+  into the new ones for about half a second (a preset whose note sits at
+  −15 dB started at −2 dB after another preset and at −24 dB after Init;
+  loading the same file twice did not help, half a second of silent
+  rendering does). `SerumHost.load_preset` and `Serum2Host.load_preset` now
+  end with that settle (`settle_seconds`, default 0.5; Serum 2 showed only
+  about 1 dB of onset difference but gets it too). Every Serum reference in
+  the listening sets was re-rendered: over the 669 clips the median distance
+  moved 12.56 → 12.58, spectral
+  7.85 → 7.86 dB, envelope correlation
+  0.739 → 0.754 (clean tier 0.77 → 0.793),
+  |level| 4.2 → 4.08 dB. Earlier
+  `out/eval/*.json` tags were scored against the old references and are not
+  comparable with new runs; the effect fixtures always loaded Init before
+  each fixture, so their onsets were consistent and the fitted laws stand.
+  On the settled references the 0.6.1 LFO 5–8 fix scores 18 closer, 26
+  further, 82 unchanged on its 126 presets (median 11.88 → 12.02, envelope
+  correlation 0.677 → 0.689).
+
 ## 0.6.1 (2026-09-11)
 
 * Serum 1 classic layout: the LFO 5–8 switches (ANCH, BPM off, DOT, TRIP,

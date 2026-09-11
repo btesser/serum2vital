@@ -573,3 +573,35 @@ Vital now sits about 1.3 dB below Serum on median, 2-3 dB on presets with a
 compressor or Hyper, where the old +12/+16 dB band-gain defaults had been
 masking deficits elsewhere; that is the next measurable item, together with
 the per-effect `FX * Level` trims (not converted) and Serum 2's EQ Q law.
+
+### Fourth pass (2026-09-11): settled references
+
+Two things came out of testing the LFO 5-8 switch fix (0.6.1).
+
+* **The mode mapping is exact.** A crafted Init preset with LFO 1 driving
+  oscillator A level at 1 Hz (mod slot 1 record plus `Mod 1 amt`, LFO flags
+  in the new-layout block) renders in Vital within 0.2 dB per 100 ms of
+  Serum in TRIG, ENV and free-running modes: the LFO starts at the bottom
+  (stored y = 1, Vital point y = 1), peaks mid-cycle, and ENV holds the last
+  value. So the reader convention (0 = top) and Vital's point convention agree
+  without inversion, and TRIG/ENV map to Vital sync types 0/2 as used.
+* **Serum's headless renders depended on the previous preset.** Serum
+  smooths parameters across a preset change; a render straight after
+  `load_preset` starts inside a half-second glide from the previous preset's
+  levels (SY Basic: −2 dB falling to −15 dB after another preset, Init: −24 dB
+  rising to −17 dB after SY Basic). Loading twice does nothing; 0.1 s of
+  silent rendering is not enough; 0.5 s is (1.0 s identical). Both hosts now
+  settle in `load_preset`. Re-rendering every Serum reference moved the
+  669-clip medians by 12.56 → 12.58
+  (distance), 7.85 → 7.86 dB (spectral),
+  0.739 → 0.754 (envelope correlation);
+  `out/eval` tags from before this are not comparable with new runs. The
+  effect fixtures loaded Init before every fixture, so their onsets were at
+  least consistent, and the laws fitted from them stand.
+
+The LFO 5-8 fix itself is mixed on the distance metric (18 closer, 26
+further, 82 unchanged of 126 corrected presets against settled references):
+one-shot ENV drums and screeches gain the most (DR Snare 1 15.7 → 8.6,
+SY Screech 1 15.3 → 10.6); the losses are compressed hardstyle presets whose
+now-correct LFO drives the multiband compressor and distortion mix through
+laws that were already approximate.
